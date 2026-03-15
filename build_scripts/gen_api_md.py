@@ -250,24 +250,25 @@ def main() -> None:
         md_path = API_MD_DIR / f"{slug}.md"
         content = render_module(data)
         members = data.get("members", [])
+        rendered_count = sum(1 for m in members if m.get("kind") in ("class", "function", "alias"))
         md_path.write_text(content, encoding="utf-8")
-        print(f"Written {md_path} ({len(members)} members)")
+        print(f"Written {md_path} ({rendered_count} members)")
 
     # Generate index page
     index_parts = ["# API Reference\n"]
     for data in modules:
         mod_name = data["name"]
         members = data.get("members", [])
-        member_count = len(members)
         slug = mod_name.replace(".", "_")
 
         classes = [f"`{m['name']}`" for m in members if m.get("kind") == "class"]
         functions = [f"`{m['name']}()`" for m in members if m.get("kind") == "function"]
         aliases = [f"`{m['name']}`" for m in members if m.get("kind") == "alias"]
+        rendered_count = len(classes) + len(functions) + len(aliases)
         preview_items = (classes + functions + aliases)[:8]
         preview = ", ".join(preview_items)
-        if member_count > len(preview_items):
-            preview += f" ... ({member_count} total)"
+        if rendered_count > len(preview_items):
+            preview += f" ... ({rendered_count} total)"
 
         index_parts.append(f"## [{mod_name}]({slug}.md)\n")
         if preview:
