@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import traceback
+import ctypes
 
 GLOBAL_MUTEX_NAME = "PyRIT-Gradio"
 
@@ -29,8 +30,6 @@ def create_mutex() -> bool:
     if sys.platform != "win32":
         return True
 
-    import ctypes.wintypes  # noqa: F401
-
     ctypes.windll.kernel32.CreateMutexW(None, False, GLOBAL_MUTEX_NAME)
     last_error = ctypes.windll.kernel32.GetLastError()
     return bool(last_error != 183)  # ERROR_ALREADY_EXISTS
@@ -39,8 +38,6 @@ def create_mutex() -> bool:
 def is_app_running() -> bool:
     if sys.platform != "win32":
         return False
-
-    import ctypes.wintypes  # noqa: F401
 
     SYNCHRONIZE = 0x00100000
     mutex = ctypes.windll.kernel32.OpenMutexW(SYNCHRONIZE, False, GLOBAL_MUTEX_NAME)
