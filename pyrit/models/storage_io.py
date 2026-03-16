@@ -254,6 +254,23 @@ class AzureBlobStorageIO(StorageIO):
             return container_name, blob_name
         raise ValueError("Invalid blob URL")
 
+    def _resolve_blob_name(self, path: Union[Path, str]) -> str:
+        """
+        Resolve a blob name from either a full blob URL or a relative blob path.
+
+        Args:
+            path (Union[Path, str]): Blob URL or relative blob path.
+
+        Returns:
+            str: The resolved blob name.
+        """
+        path_str = str(path)
+        parsed_url = urlparse(path_str)
+        if parsed_url.scheme and parsed_url.netloc:
+            _, blob_name = self.parse_blob_url(path_str)
+            return blob_name
+        return path_str
+
     async def read_file(self, path: Union[Path, str]) -> bytes:
         """
         Asynchronously reads the content of a file (blob) from Azure Blob Storage.
@@ -284,7 +301,7 @@ class AzureBlobStorageIO(StorageIO):
         if not self._client_async:
             await self._create_container_client_async()
 
-        _, blob_name = self.parse_blob_url(str(path))
+        blob_name = self._resolve_blob_name(path)
 
         try:
             blob_client = self._client_async.get_blob_client(blob=blob_name)
@@ -311,7 +328,7 @@ class AzureBlobStorageIO(StorageIO):
         """
         if not self._client_async:
             await self._create_container_client_async()
-        _, blob_name = self.parse_blob_url(str(path))
+        blob_name = self._resolve_blob_name(path)
         try:
             await self._upload_blob_async(file_name=blob_name, data=data, content_type=self._blob_content_type)
         except Exception as exc:
@@ -335,7 +352,7 @@ class AzureBlobStorageIO(StorageIO):
         if not self._client_async:
             await self._create_container_client_async()
         try:
-            _, blob_name = self.parse_blob_url(str(path))
+            blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)
             await blob_client.get_blob_properties()
             return True
@@ -359,7 +376,7 @@ class AzureBlobStorageIO(StorageIO):
         if not self._client_async:
             await self._create_container_client_async()
         try:
-            _, blob_name = self.parse_blob_url(str(path))
+            blob_name = self._resolve_blob_name(path)
             blob_client = self._client_async.get_blob_client(blob=blob_name)
             blob_properties = await blob_client.get_blob_properties()
             return blob_properties.size > 0

@@ -102,6 +102,25 @@ async def test_azure_blob_storage_io_read_file(azure_blob_storage_io):
 
 
 @pytest.mark.asyncio
+async def test_azure_blob_storage_io_read_file_with_relative_path(azure_blob_storage_io):
+    mock_container_client = AsyncMock()
+    azure_blob_storage_io._client_async = mock_container_client
+
+    mock_blob_client = AsyncMock()
+    mock_blob_stream = AsyncMock()
+
+    mock_container_client.get_blob_client = Mock(return_value=mock_blob_client)
+    mock_blob_client.download_blob = AsyncMock(return_value=mock_blob_stream)
+    mock_blob_stream.readall = AsyncMock(return_value=b"Test file content")
+    mock_container_client.close = AsyncMock()
+
+    result = await azure_blob_storage_io.read_file("dir1/dir2/sample.png")
+
+    assert result == b"Test file content"
+    mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/sample.png")
+
+
+@pytest.mark.asyncio
 async def test_azure_blob_storage_io_write_file():
     container_url = "https://youraccount.blob.core.windows.net/yourcontainer"
     azure_blob_storage_io = AzureBlobStorageIO(
@@ -141,6 +160,23 @@ async def test_azure_storage_io_path_exists(azure_blob_storage_io):
     file_path = "https://example.blob.core.windows.net/container/dir1/dir2/blob_name.txt"
     exists = await azure_blob_storage_io.path_exists(file_path)
     assert exists is True
+
+
+@pytest.mark.asyncio
+async def test_azure_storage_io_path_exists_with_relative_path(azure_blob_storage_io):
+    mock_container_client = AsyncMock()
+    azure_blob_storage_io._client_async = mock_container_client
+
+    mock_blob_client = AsyncMock()
+
+    mock_container_client.get_blob_client = Mock(return_value=mock_blob_client)
+    mock_blob_client.get_blob_properties = AsyncMock()
+    mock_container_client.close = AsyncMock()
+
+    exists = await azure_blob_storage_io.path_exists("dir1/dir2/blob_name.txt")
+
+    assert exists is True
+    mock_container_client.get_blob_client.assert_called_once_with(blob="dir1/dir2/blob_name.txt")
 
 
 @pytest.mark.asyncio
