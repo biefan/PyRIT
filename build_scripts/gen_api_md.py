@@ -93,6 +93,30 @@ def render_signature(member: dict) -> str:
     return f"({sig})"
 
 
+def _escape_docstring_examples(text: str) -> str:
+    """Wrap doctest-style examples (>>> lines) in code fences."""
+    lines = text.split("\n")
+    result: list[str] = []
+    in_example = False
+    for line in lines:
+        stripped = line.strip()
+        if stripped.startswith(">>>") and not in_example:
+            in_example = True
+            result.append("```python")
+            result.append(line)
+        elif in_example and stripped.startswith((">>>", "...")):
+            result.append(line)
+        elif in_example:
+            result.append("```")
+            in_example = False
+            result.append(line)
+        else:
+            result.append(line)
+    if in_example:
+        result.append("```")
+    return "\n".join(result)
+
+
 def render_function(func: dict, heading_level: str = "###") -> str:
     """Render a function as markdown."""
     name = func["name"]
@@ -102,18 +126,13 @@ def render_function(func: dict, heading_level: str = "###") -> str:
     ret = func.get("returns_annotation", "")
     ret_str = f" → {ret}" if ret else ""
 
-    # Use heading for name, code block for full signature if long
-    full_sig = f"{prefix}{name}{sig}{ret_str}"
-    if len(full_sig) > 80:
-        parts = [f"{heading_level} {prefix}{name}\n"]
-        parts.append(f"```python\n{prefix}{name}{sig}{ret_str}\n```\n")
-    else:
-        parts = [f"{heading_level} `{full_sig}`\n"]
+    parts = [f"{heading_level} `{prefix}{name}`\n"]
+    parts.append(f"```python\n{prefix}{name}{sig}{ret_str}\n```\n")
 
     ds = func.get("docstring", {})
     if ds:
         if ds.get("text"):
-            parts.append(ds["text"] + "\n")
+            parts.append(_escape_docstring_examples(ds["text"]) + "\n")
         params_table = render_params(ds.get("params", []))
         if params_table:
             parts.append(params_table + "\n")
@@ -133,11 +152,13 @@ def render_class(cls: dict) -> str:
     bases = cls.get("bases", [])
     bases_str = f"({', '.join(bases)})" if bases else ""
 
-    parts = [f"## `class {name}{bases_str}`\n"]
+    parts = [f"## `{name}`\n"]
+    if bases_str:
+        parts.append(f"Bases: `{bases_str[1:-1]}`\n")
 
     ds = cls.get("docstring", {})
     if ds and ds.get("text"):
-        parts.append(ds["text"] + "\n")
+        parts.append(_escape_docstring_examples(ds["text"]) + "\n")
 
     # __init__
     init = cls.get("init")
