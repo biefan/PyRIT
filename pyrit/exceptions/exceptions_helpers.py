@@ -121,8 +121,8 @@ def extract_json_from_string(response_msg: str) -> str:
             continue
 
         try:
-            _, end_index = decoder.raw_decode(response_msg[index:])
-            return response_msg[index : index + end_index]
+            _, end_index = decoder.raw_decode(response_msg, idx=index)
+            return response_msg[index:end_index]
         except json.JSONDecodeError:
             continue
 
