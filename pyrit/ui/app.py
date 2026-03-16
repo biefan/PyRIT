@@ -25,9 +25,20 @@ def launch_app(open_browser: bool = False) -> None:
         subprocess.Popen([python_path, current_path, str(open_browser)])
 
 
+def create_mutex() -> bool:
+    if sys.platform != "win32":
+        return True
+
+    import ctypes.wintypes  # noqa: F401
+
+    ctypes.windll.kernel32.CreateMutexW(None, False, GLOBAL_MUTEX_NAME)
+    last_error = ctypes.windll.kernel32.GetLastError()
+    return bool(last_error != 183)  # ERROR_ALREADY_EXISTS
+
+
 def is_app_running() -> bool:
     if sys.platform != "win32":
-        raise NotImplementedError("This function is only supported on Windows.")
+        return False
 
     import ctypes.wintypes  # noqa: F401
 
@@ -42,17 +53,6 @@ def is_app_running() -> bool:
 
 
 if __name__ == "__main__":
-
-    def create_mutex() -> bool:
-        if sys.platform != "win32":
-            raise NotImplementedError("This function is only supported on Windows.")
-
-        # TODO make sure to add cross-platform support for this.
-        import ctypes.wintypes
-
-        ctypes.windll.kernel32.CreateMutexW(None, False, GLOBAL_MUTEX_NAME)
-        last_error = ctypes.windll.kernel32.GetLastError()
-        return bool(last_error != 183)  # ERROR_ALREADY_EXISTS
 
     if not create_mutex():
         print("Gradio UI is already running.")
