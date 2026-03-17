@@ -84,12 +84,22 @@ class PyRITShell(cmd.Cmd):
         # Initialize PyRIT in background thread for faster startup.
         self._init_thread = threading.Thread(target=self._background_init, daemon=True)
         self._init_complete = threading.Event()
+        self._init_error: Optional[BaseException] = None
         self._init_thread.start()
 
     def _background_init(self) -> None:
         """Initialize PyRIT modules in the background. This dramatically speeds up shell startup."""
-        asyncio.run(self.context.initialize_async())
-        self._init_complete.set()
+        try:
+            asyncio.run(self.context.initialize_async())
+        except BaseException as exc:
+            self._init_error = exc
+        finally:
+            self._init_complete.set()
+
+    def _raise_init_error(self) -> None:
+        """Re-raise background initialization failures on the calling thread."""
+        if self._init_error is not None:
+            raise self._init_error
 
     def _ensure_initialized(self) -> None:
         """Wait for initialization to complete if not already done."""
@@ -97,14 +107,17 @@ class PyRITShell(cmd.Cmd):
             print("Waiting for PyRIT initialization to complete...")
             sys.stdout.flush()
             self._init_complete.wait()
+        self._raise_init_error()
 
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
             # Wait for background init to finish BEFORE animation,
             # so its log output doesn't interfere with cursor positioning
-            self._init_complete.wait()
+            self._ensure_initialized()
             intro = banner.play_animation(no_animation=self._no_animation)
+        elif self._init_complete.is_set():
+            self._raise_init_error()
         self.intro = intro
         super().cmdloop(intro=self.intro)
 

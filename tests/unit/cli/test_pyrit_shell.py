@@ -6,8 +6,11 @@ Unit tests for the pyrit_shell CLI module.
 """
 
 import cmd
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
 
 from pyrit.cli import _banner as banner
 from pyrit.cli import pyrit_shell
@@ -32,6 +35,53 @@ class TestPyRITShell:
         # Initialize is called in a background thread, so we need to wait for it
         shell._init_complete.wait(timeout=2)
         mock_context.initialize_async.assert_called_once()
+
+    def test_background_init_failure_sets_event_and_raises_in_ensure_initialized(self):
+        """Test failed background initialization unblocks waiters and surfaces the original error."""
+        mock_context = MagicMock()
+        mock_context._database = "SQLite"
+        mock_context._log_level = "WARNING"
+        mock_context.initialize_async = AsyncMock(side_effect=RuntimeError("Initialization failed"))
+
+        shell = pyrit_shell.PyRITShell(context=mock_context)
+        shell._init_thread.join(timeout=2)
+
+        assert shell._init_complete.is_set()
+        with pytest.raises(RuntimeError, match="Initialization failed"):
+            shell._ensure_initialized()
+
+    def test_cmdloop_does_not_hang_when_background_init_fails(self):
+        """Test cmdloop surfaces background initialization failures instead of waiting forever."""
+        mock_context = MagicMock()
+        mock_context._database = "SQLite"
+        mock_context._log_level = "WARNING"
+        mock_context.initialize_async = AsyncMock(side_effect=RuntimeError("Initialization failed"))
+
+        shell = pyrit_shell.PyRITShell(context=mock_context)
+        shell._init_thread.join(timeout=2)
+
+        errors: list[BaseException] = []
+
+        def run_cmdloop() -> None:
+            try:
+                shell.cmdloop()
+            except BaseException as exc:  # pragma: no cover - assertion target
+                errors.append(exc)
+
+        with (
+            patch("pyrit.cli._banner.play_animation") as mock_play,
+            patch("cmd.Cmd.cmdloop") as mock_cmdloop,
+        ):
+            cmdloop_thread = threading.Thread(target=run_cmdloop, daemon=True)
+            cmdloop_thread.start()
+            cmdloop_thread.join(timeout=0.5)
+
+            assert not cmdloop_thread.is_alive()
+            assert len(errors) == 1
+            assert isinstance(errors[0], RuntimeError)
+            assert str(errors[0]) == "Initialization failed"
+            mock_play.assert_not_called()
+            mock_cmdloop.assert_not_called()
 
     def test_prompt_and_intro(self):
         """Test shell prompt is set and cmdloop wires play_animation to intro."""
