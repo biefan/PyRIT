@@ -610,6 +610,9 @@ class MemoryInterface(abc.ABC):
             Exception: If there is an error retrieving the prompts,
                 an exception is logged and an empty list is returned.
         """
+        if prompt_ids is not None and len(prompt_ids) == 0:
+            return []
+
         conditions = []
         if attack_id:
             conditions.append(self._get_message_pieces_attack_conditions(attack_id=str(attack_id)))
