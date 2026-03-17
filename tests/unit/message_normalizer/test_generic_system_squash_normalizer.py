@@ -70,3 +70,56 @@ async def test_generic_squash_normalize_to_dicts_async():
     assert "### Instructions ###" in result[0]["converted_value"]
     assert "System message" in result[0]["converted_value"]
     assert "User message" in result[0]["converted_value"]
+
+
+@pytest.mark.asyncio
+async def test_generic_squash_preserves_multipart_user_message():
+    """Test that squashing keeps non-text user pieces instead of collapsing to plain text."""
+    conversation_id = "conv-1"
+    messages = [
+        _make_message("system", "System message"),
+        Message(
+            message_pieces=[
+                MessagePiece(
+                    role="user",
+                    original_value="User message",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ),
+                MessagePiece(
+                    role="user",
+                    original_value="/tmp/example.png",
+                    original_value_data_type="image_path",
+                    conversation_id=conversation_id,
+                    sequence=0,
+                ),
+            ]
+        ),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 1
+    assert result[0].api_role == "user"
+    assert len(result[0].message_pieces) == 2
+    assert result[0].get_value() == "### Instructions ###\n\nSystem message\n\n######\n\nUser message"
+    assert result[0].message_pieces[1].converted_value == "/tmp/example.png"
+    assert result[0].message_pieces[1].converted_value_data_type == "image_path"
+
+
+@pytest.mark.asyncio
+async def test_generic_squash_uses_first_user_message_instead_of_rewriting_assistant():
+    """Test that squash targets the first user message even if assistant messages appear first."""
+    messages = [
+        _make_message("system", "System message"),
+        _make_message("assistant", "Assistant message"),
+        _make_message("user", "User message"),
+    ]
+
+    result = await GenericSystemSquashNormalizer().normalize_async(messages)
+
+    assert len(result) == 2
+    assert result[0].api_role == "assistant"
+    assert result[0].get_value() == "Assistant message"
+    assert result[1].api_role == "user"
+    assert result[1].get_value() == "### Instructions ###\n\nSystem message\n\n######\n\nUser message"

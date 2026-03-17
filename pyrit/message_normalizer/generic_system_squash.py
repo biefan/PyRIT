@@ -1,9 +1,10 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import copy
 
 from pyrit.message_normalizer.message_normalizer import MessageListNormalizer
-from pyrit.models import Message
+from pyrit.models import Message, MessagePiece
 
 
 class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
@@ -43,12 +44,35 @@ class GenericSystemSquashNormalizer(MessageListNormalizer[Message]):
             # Only system message, convert to user message
             return [Message.from_prompt(prompt=first_piece.converted_value, role="user")]
 
-        # Combine system with first user message
+        user_message_index = next(
+            (i for i, message in enumerate(messages[1:], start=1) if message.api_role == "user"),
+            -1,
+        )
+        if user_message_index == -1:
+            # Preserve the instruction content without rewriting non-user messages.
+            return [Message.from_prompt(prompt=first_piece.converted_value, role="user")] + list(messages[1:])
+
+        # Combine system with the first user message
         system_content = first_piece.converted_value
-        user_piece = messages[1].get_piece()
+        user_piece = messages[user_message_index].get_piece()
         user_content = user_piece.converted_value
 
         combined_content = f"### Instructions ###\n\n{system_content}\n\n######\n\n{user_content}"
-        squashed_message = Message.from_prompt(prompt=combined_content, role="user")
+        squashed_message = copy.deepcopy(messages[user_message_index])
+
+        if squashed_message.message_pieces[0].converted_value_data_type == "text":
+            squashed_message.message_pieces[0].original_value = combined_content
+            squashed_message.message_pieces[0].converted_value = combined_content
+        else:
+            squashed_message.message_pieces.insert(
+                0,
+                MessagePiece(
+                    role="user",
+                    original_value=combined_content,
+                    conversation_id=user_piece.conversation_id,
+                    sequence=user_piece.sequence,
+                ),
+            )
+
         # Return the squashed message followed by remaining messages (skip first two)
-        return [squashed_message] + list(messages[2:])
+        return list(messages[1:user_message_index]) + [squashed_message] + list(messages[user_message_index + 1 :])
