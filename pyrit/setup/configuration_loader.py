@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from pyrit.common.path import DEFAULT_CONFIG_PATH
+from pyrit.common.utils import verify_and_resolve_path
 from pyrit.common.yaml_loadable import YamlLoadable
 from pyrit.identifiers.class_name_utils import class_name_to_snake_case
 from pyrit.setup.initialization import (
@@ -100,6 +101,8 @@ class ConfigurationLoader(YamlLoadable):
     silent: bool = False
     operator: Optional[str] = None
     operation: Optional[str] = None
+    _initialization_scripts_base_path: Optional[pathlib.Path] = field(default=None, init=False, repr=False)
+    _env_files_base_path: Optional[pathlib.Path] = field(default=None, init=False, repr=False)
 
     def __post_init__(self) -> None:
         """Validate and normalize the configuration after loading."""
@@ -179,6 +182,48 @@ class ConfigurationLoader(YamlLoadable):
         filtered_data = {k: v for k, v in data.items() if v is not None}
         return cls(**filtered_data)
 
+    @classmethod
+    def from_yaml_file(cls, file: pathlib.Path | str) -> "ConfigurationLoader":
+        """
+        Create a ConfigurationLoader from a YAML file and preserve its base directory.
+
+        Relative initialization script and env file paths should resolve from the
+        configuration file directory rather than the caller's working directory.
+
+        Returns:
+            A new ConfigurationLoader instance with per-field path resolution bases.
+        """
+        resolved_file = verify_and_resolve_path(file)
+        config = YamlLoadable.from_yaml_file.__func__(cls, resolved_file)
+        config._set_path_resolution_base_paths(
+            initialization_scripts_base_path=resolved_file.parent,
+            env_files_base_path=resolved_file.parent,
+        )
+        return config
+
+    def _set_path_resolution_base_paths(
+        self,
+        *,
+        initialization_scripts_base_path: Optional[pathlib.Path],
+        env_files_base_path: Optional[pathlib.Path],
+    ) -> None:
+        """Set per-field base paths for resolving relative configuration paths."""
+        self._initialization_scripts_base_path = initialization_scripts_base_path
+        self._env_files_base_path = env_files_base_path
+
+    @staticmethod
+    def _resolve_config_path(path_str: str, base_path: Optional[pathlib.Path]) -> pathlib.Path:
+        """
+        Resolve config-provided relative paths against an optional base directory.
+
+        Returns:
+            An absolute path when a relative base is available, or the original absolute path.
+        """
+        config_path = pathlib.Path(path_str)
+        if config_path.is_absolute():
+            return config_path
+        return (base_path or pathlib.Path.cwd()) / config_path
+
     @staticmethod
     def load_with_overrides(
         config_file: Optional[pathlib.Path] = None,
@@ -217,6 +262,8 @@ class ConfigurationLoader(YamlLoadable):
         import logging
 
         logger = logging.getLogger(__name__)
+        initialization_scripts_base_path: Optional[pathlib.Path] = None
+        env_files_base_path: Optional[pathlib.Path] = None
 
         # Start with defaults - None means "use defaults", [] means "load nothing"
         config_data: dict[str, Any] = {
@@ -239,6 +286,8 @@ class ConfigurationLoader(YamlLoadable):
                 # Preserve None vs [] distinction from config file
                 config_data["initialization_scripts"] = default_config.initialization_scripts
                 config_data["env_files"] = default_config.env_files
+                initialization_scripts_base_path = default_config._initialization_scripts_base_path
+                env_files_base_path = default_config._env_files_base_path
                 if default_config.operator:
                     config_data["operator"] = default_config.operator
                 if default_config.operation:
@@ -259,6 +308,8 @@ class ConfigurationLoader(YamlLoadable):
             # Preserve None vs [] distinction from config file
             config_data["initialization_scripts"] = explicit_config.initialization_scripts
             config_data["env_files"] = explicit_config.env_files
+            initialization_scripts_base_path = explicit_config._initialization_scripts_base_path
+            env_files_base_path = explicit_config._env_files_base_path
             if explicit_config.operator:
                 config_data["operator"] = explicit_config.operator
             if explicit_config.operation:
@@ -280,11 +331,18 @@ class ConfigurationLoader(YamlLoadable):
 
         if initialization_scripts is not None:
             config_data["initialization_scripts"] = list(initialization_scripts)
+            initialization_scripts_base_path = None
 
         if env_files is not None:
             config_data["env_files"] = list(env_files)
+            env_files_base_path = None
 
-        return ConfigurationLoader.from_dict(config_data)
+        config = ConfigurationLoader.from_dict(config_data)
+        config._set_path_resolution_base_paths(
+            initialization_scripts_base_path=initialization_scripts_base_path,
+            env_files_base_path=env_files_base_path,
+        )
+        return config
 
     @classmethod
     def get_default_config_path(cls) -> pathlib.Path:
@@ -325,8 +383,12 @@ class ConfigurationLoader(YamlLoadable):
                     f"Initializer '{config.name}' not found in registry.\nAvailable initializers: {available}"
                 )
 
-            # Instantiate with args if provided
-            instance = initializer_class(**config.args) if config.args else initializer_class()
+            # Instantiate and set params if provided
+            instance = initializer_class()
+            if config.args:
+                instance.set_params_from_args(args=config.args)
+                # Validate params early against supported_parameters to fail fast
+                instance._validate_params(params=instance.params)
 
             resolved.append(instance)
 
@@ -348,14 +410,10 @@ class ConfigurationLoader(YamlLoadable):
         if len(self.initialization_scripts) == 0:
             return []
 
-        resolved: list[pathlib.Path] = []
-        for script_str in self.initialization_scripts:
-            script_path = pathlib.Path(script_str)
-            if not script_path.is_absolute():
-                script_path = pathlib.Path.cwd() / script_path
-            resolved.append(script_path)
-
-        return resolved
+        return [
+            self._resolve_config_path(script_str, self._initialization_scripts_base_path)
+            for script_str in self.initialization_scripts
+        ]
 
     def _resolve_env_files(self) -> Optional[Sequence[pathlib.Path]]:
         """
@@ -373,14 +431,10 @@ class ConfigurationLoader(YamlLoadable):
         if len(self.env_files) == 0:
             return []
 
-        resolved: list[pathlib.Path] = []
-        for env_str in self.env_files:
-            env_path = pathlib.Path(env_str)
-            if not env_path.is_absolute():
-                env_path = pathlib.Path.cwd() / env_path
-            resolved.append(env_path)
-
-        return resolved
+        return [
+            self._resolve_config_path(env_str, self._env_files_base_path)
+            for env_str in self.env_files
+        ]
 
     async def initialize_pyrit_async(self) -> None:
         """

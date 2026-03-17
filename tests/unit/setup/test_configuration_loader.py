@@ -231,6 +231,26 @@ class TestConfigurationLoaderResolvers:
         # Check path ends with expected components (works on both Unix and Windows)
         assert resolved[0].parts[-2:] == ("relative", "script.py")
 
+    @pytest.mark.parametrize(
+        ("field_name", "resolver_name", "relative_path"),
+        [
+            ("initialization_scripts", "_resolve_initialization_scripts", "scripts/init.py"),
+            ("env_files", "_resolve_env_files", "env/local.env"),
+        ],
+    )
+    def test_from_yaml_file_resolves_relative_paths_from_config_directory(
+        self, tmp_path, field_name, resolver_name, relative_path
+    ):
+        """Test relative paths from YAML are resolved from the config file directory."""
+        config_path = tmp_path / "configs" / "pyrit.yaml"
+        config_path.parent.mkdir()
+        config_path.write_text(f"{field_name}:\n  - ./{relative_path}\n", encoding="utf-8")
+
+        config = ConfigurationLoader.from_yaml_file(config_path)
+        resolved = getattr(config, resolver_name)()
+
+        assert resolved == [config_path.parent / relative_path]
+
     def test_resolve_env_files_none_returns_none(self):
         """Test that None (default) returns None to signal 'use defaults'."""
         config = ConfigurationLoader()
@@ -420,6 +440,50 @@ class TestLoadWithOverrides:
         config = ConfigurationLoader.load_with_overrides(env_files=["/path/to/.env"])
 
         assert config.env_files == ["/path/to/.env"]
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    @pytest.mark.parametrize(
+        ("field_name", "resolver_name", "relative_path"),
+        [
+            ("initialization_scripts", "_resolve_initialization_scripts", "scripts/init.py"),
+            ("env_files", "_resolve_env_files", "env/local.env"),
+        ],
+    )
+    def test_load_with_overrides_resolves_relative_paths_from_config_directory(
+        self, mock_default_path, tmp_path, field_name, resolver_name, relative_path
+    ):
+        """Test config file relative paths are resolved from the config file directory."""
+        mock_default_path.exists.return_value = False
+        config_path = tmp_path / "configs" / "pyrit.yaml"
+        config_path.parent.mkdir()
+        config_path.write_text(f"{field_name}:\n  - ./{relative_path}\n", encoding="utf-8")
+
+        config = ConfigurationLoader.load_with_overrides(config_file=config_path)
+        resolved = getattr(config, resolver_name)()
+
+        assert resolved == [config_path.parent / relative_path]
+
+    @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
+    @pytest.mark.parametrize(
+        ("field_name", "resolver_name", "relative_path"),
+        [
+            ("initialization_scripts", "_resolve_initialization_scripts", "scripts/override.py"),
+            ("env_files", "_resolve_env_files", "env/override.env"),
+        ],
+    )
+    def test_load_with_overrides_cli_relative_paths_use_cwd(
+        self, mock_default_path, tmp_path, field_name, resolver_name, relative_path
+    ):
+        """Test CLI path overrides keep resolving relative paths from the current directory."""
+        mock_default_path.exists.return_value = False
+        config_path = tmp_path / "configs" / "pyrit.yaml"
+        config_path.parent.mkdir()
+        config_path.write_text(f"{field_name}:\n  - ./from-config-placeholder\n", encoding="utf-8")
+
+        config = ConfigurationLoader.load_with_overrides(config_file=config_path, **{field_name: [relative_path]})
+        resolved = getattr(config, resolver_name)()
+
+        assert resolved == [pathlib.Path.cwd() / relative_path]
 
     @mock.patch("pyrit.setup.configuration_loader.DEFAULT_CONFIG_PATH")
     def test_load_with_overrides_converts_sequence_to_list(self, mock_default_path):
