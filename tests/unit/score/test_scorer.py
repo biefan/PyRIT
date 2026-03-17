@@ -492,6 +492,25 @@ async def test_scorer_score_responses_batch_async(patch_central_database):
 
 
 @pytest.mark.asyncio
+async def test_score_prompts_batch_async_rejects_explicit_empty_objectives():
+    """Test explicit empty objectives are rejected for non-empty message batches."""
+    scorer = MockScorer()
+    message = MessagePiece(role="user", original_value="Hello user", sequence=1).to_message()
+
+    with pytest.raises(ValueError, match="objectives"):
+        await scorer.score_prompts_batch_async(messages=[message], objectives=[])
+
+
+@pytest.mark.asyncio
+async def test_score_image_batch_async_rejects_explicit_empty_objectives():
+    """Test explicit empty objectives are rejected for non-empty image batches."""
+    scorer = MockScorer()
+
+    with pytest.raises(ValueError, match="objectives"):
+        await scorer.score_image_batch_async(image_paths=["test_image.png"], objectives=[])
+
+
+@pytest.mark.asyncio
 async def test_score_response_async_empty_scorers():
     """Test that score_response_async returns empty list when no scorers provided."""
     response = Message(
