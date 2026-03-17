@@ -684,6 +684,11 @@ class TestParseRunArguments:
         with pytest.raises(ValueError, match="requires a value"):
             frontend_core.parse_run_arguments(args_string="test_scenario --max-concurrency")
 
+    def test_parse_run_arguments_unknown_argument_raises(self):
+        """Test parsing with an unknown argument fails fast."""
+        with pytest.raises(ValueError, match=r"Unknown argument: --bogus"):
+            frontend_core.parse_run_arguments(args_string="test_scenario --bogus 123 --max-retries 2")
+
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
