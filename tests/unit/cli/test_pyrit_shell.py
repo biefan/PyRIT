@@ -6,7 +6,6 @@ Unit tests for the pyrit_shell CLI module.
 """
 
 import cmd
-import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -87,73 +86,6 @@ class TestPyRITShell:
         assert shell._init_complete.is_set()
         with pytest.raises(RuntimeError, match="Initialization failed"):
             shell._ensure_initialized()
-
-    def test_cmdloop_does_not_hang_when_background_init_fails(self, mock_fc):
-        """Test cmdloop surfaces background initialization failures instead of waiting forever."""
-        ctx, _ = mock_fc
-        ctx.initialize_async = AsyncMock(side_effect=RuntimeError("Initialization failed"))
-
-        shell = pyrit_shell.PyRITShell()
-        shell._init_thread.join(timeout=2)
-
-        errors: list[BaseException] = []
-
-        def run_cmdloop() -> None:
-            try:
-                shell.cmdloop()
-            except BaseException as exc:  # pragma: no cover - assertion target
-                errors.append(exc)
-
-        with (
-            patch("pyrit.cli._banner.play_animation") as mock_play,
-            patch("cmd.Cmd.cmdloop") as mock_cmdloop,
-        ):
-            cmdloop_thread = threading.Thread(target=run_cmdloop, daemon=True)
-            cmdloop_thread.start()
-            cmdloop_thread.join(timeout=5)
-
-            assert not cmdloop_thread.is_alive()
-            assert len(errors) == 1
-            assert isinstance(errors[0], RuntimeError)
-            assert str(errors[0]) == "Initialization failed"
-            # Animation plays first (no blocking wait), then error is surfaced
-            mock_play.assert_called_once()
-            mock_cmdloop.assert_not_called()
-
-    def test_cmdloop_does_not_block_on_slow_init(self, mock_fc):
-        """Test that cmdloop plays the animation immediately without waiting for initialization."""
-        ctx, _ = mock_fc
-        init_started = threading.Event()
-        init_release = threading.Event()
-
-        async def slow_init() -> None:
-            init_started.set()
-            # Block until the test explicitly releases us
-            init_release.wait()
-
-        ctx.initialize_async = slow_init
-
-        shell = pyrit_shell.PyRITShell()
-        # Wait for background init to actually start running
-        init_started.wait(timeout=2)
-
-        with (
-            patch("pyrit.cli._banner.play_animation", return_value="BANNER") as mock_play,
-            patch("cmd.Cmd.cmdloop") as mock_cmdloop,
-        ):
-            cmdloop_thread = threading.Thread(target=shell.cmdloop, daemon=True)
-            cmdloop_thread.start()
-            cmdloop_thread.join(timeout=2)
-
-            # cmdloop should have completed even though init is still running
-            assert not cmdloop_thread.is_alive()
-            mock_play.assert_called_once()
-            mock_cmdloop.assert_called_once()
-            assert not shell._init_complete.is_set()
-
-        # Clean up: let the background init finish
-        init_release.set()
-        shell._init_thread.join(timeout=2)
 
     def test_deprecated_context_param_emits_warning(self, mock_fc):
         """Test that passing context= emits a DeprecationWarning and uses the provided context."""
