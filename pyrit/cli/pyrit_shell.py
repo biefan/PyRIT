@@ -71,6 +71,7 @@ class PyRITShell(cmd.Cmd):
         initializer_names: Optional[list[Any]] = None,
         env_files: Optional[list[Path]] = None,
         log_level: Optional[int] = None,
+        context: Optional[frontend_core.FrontendCore] = None,
     ) -> None:
         """
         Initialize the PyRIT shell.
@@ -87,6 +88,12 @@ class PyRITShell(cmd.Cmd):
             initializer_names (Optional[list[Any]]): Initializer entries (names or dicts).
             env_files (Optional[list[Path]]): Environment file paths to load in order.
             log_level (Optional[int]): Logging level constant (e.g., ``logging.WARNING``).
+            context (Optional[frontend_core.FrontendCore]): Deprecated. Pre-created FrontendCore
+                context. Use the individual keyword arguments instead.
+
+        Raises:
+            ValueError: If ``context`` is provided together with any other
+                FrontendCore keyword arguments.
         """
         super().__init__()
         self._no_animation = no_animation
@@ -102,6 +109,23 @@ class PyRITShell(cmd.Cmd):
             }.items()
             if v is not None
         }
+
+        if context is not None:
+            if self._context_kwargs:
+                raise ValueError(
+                    "Cannot pass 'context' together with FrontendCore keyword arguments "
+                    f"({', '.join(self._context_kwargs)}). Use one or the other."
+                )
+            from pyrit.common.deprecation import print_deprecation_message
+
+            print_deprecation_message(
+                old_item="PyRITShell(context=...)",
+                new_item="PyRITShell(database=..., log_level=..., ...)",
+                removed_in="0.14.0",
+            )
+            self._deprecated_context = context
+        else:
+            self._deprecated_context = None
 
         # Track scenario execution history: list of (command_string, ScenarioResult) tuples
         self._scenario_history: list[tuple[str, ScenarioResult]] = []
@@ -121,9 +145,12 @@ class PyRITShell(cmd.Cmd):
     def _background_init(self) -> None:
         """Import heavy modules and initialize PyRIT in the background."""
         try:
-            from pyrit.cli import frontend_core as fc
+            if self._deprecated_context is not None:
+                self.context = self._deprecated_context
+            else:
+                from pyrit.cli import frontend_core as fc
 
-            self.context = fc.FrontendCore(**self._context_kwargs)
+                self.context = fc.FrontendCore(**self._context_kwargs)
             self.default_database = self.context._database
             self.default_log_level = self.context._log_level
             self.default_env_files = self.context._env_files
