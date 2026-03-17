@@ -65,7 +65,12 @@ class PyRITShell(cmd.Cmd):
         self,
         *,
         no_animation: bool = False,
-        **context_kwargs: Any,
+        config_file: Optional[Path] = None,
+        database: Optional[str] = None,
+        initialization_scripts: Optional[list[Path]] = None,
+        initializer_names: Optional[list[Any]] = None,
+        env_files: Optional[list[Path]] = None,
+        log_level: Optional[int] = None,
     ) -> None:
         """
         Initialize the PyRIT shell.
@@ -75,12 +80,28 @@ class PyRITShell(cmd.Cmd):
         shell prompt appears immediately.
 
         Args:
-            no_animation: If True, skip the animated startup banner.
-            **context_kwargs: Keyword arguments forwarded to ``FrontendCore()``.
+            no_animation (bool): If True, skip the animated startup banner.
+            config_file (Optional[Path]): Path to a YAML configuration file.
+            database (Optional[str]): Database type (InMemory, SQLite, or AzureSQL).
+            initialization_scripts (Optional[list[Path]]): Initialization script paths.
+            initializer_names (Optional[list[Any]]): Initializer entries (names or dicts).
+            env_files (Optional[list[Path]]): Environment file paths to load in order.
+            log_level (Optional[int]): Logging level constant (e.g., ``logging.WARNING``).
         """
         super().__init__()
         self._no_animation = no_animation
-        self._context_kwargs = context_kwargs
+        self._context_kwargs: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "config_file": config_file,
+                "database": database,
+                "initialization_scripts": initialization_scripts,
+                "initializer_names": initializer_names,
+                "env_files": env_files,
+                "log_level": log_level,
+            }.items()
+            if v is not None
+        }
 
         # Track scenario execution history: list of (command_string, ScenarioResult) tuples
         self._scenario_history: list[tuple[str, ScenarioResult]] = []
