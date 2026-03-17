@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import asyncio
 import cmd
+import logging
 import sys
 import threading
 from pathlib import Path
@@ -112,10 +113,20 @@ class PyRITShell(cmd.Cmd):
     def cmdloop(self, intro: Optional[str] = None) -> None:
         """Override cmdloop to play animated banner before starting the REPL."""
         if intro is None:
-            # Wait for background init to finish BEFORE animation,
-            # so its log output doesn't interfere with cursor positioning
-            self._ensure_initialized()
-            intro = banner.play_animation(no_animation=self._no_animation)
+            # Play animation immediately while background init continues.
+            # Suppress logging during the animation so log lines don't corrupt
+            # the ANSI cursor-positioned frames.
+            root_logger = logging.getLogger()
+            prev_level = root_logger.level
+            root_logger.setLevel(logging.CRITICAL)
+            try:
+                intro = banner.play_animation(no_animation=self._no_animation)
+            finally:
+                root_logger.setLevel(prev_level)
+
+            # If init already failed while the animation played, surface it now.
+            if self._init_complete.is_set():
+                self._raise_init_error()
         elif self._init_complete.is_set():
             self._raise_init_error()
         self.intro = intro

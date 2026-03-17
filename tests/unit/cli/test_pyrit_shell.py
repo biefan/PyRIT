@@ -80,8 +80,46 @@ class TestPyRITShell:
             assert len(errors) == 1
             assert isinstance(errors[0], RuntimeError)
             assert str(errors[0]) == "Initialization failed"
-            mock_play.assert_not_called()
+            # Animation plays first (no blocking wait), then error is surfaced
+            mock_play.assert_called_once()
             mock_cmdloop.assert_not_called()
+
+    def test_cmdloop_does_not_block_on_slow_init(self):
+        """Test that cmdloop plays the animation immediately without waiting for initialization."""
+        init_started = threading.Event()
+        init_release = threading.Event()
+
+        async def slow_init() -> None:
+            init_started.set()
+            # Block until the test explicitly releases us
+            init_release.wait()
+
+        mock_context = MagicMock()
+        mock_context._database = "SQLite"
+        mock_context._log_level = "WARNING"
+        mock_context.initialize_async = slow_init
+
+        shell = pyrit_shell.PyRITShell(context=mock_context)
+        # Wait for background init to actually start running
+        init_started.wait(timeout=2)
+
+        with (
+            patch("pyrit.cli._banner.play_animation", return_value="BANNER") as mock_play,
+            patch("cmd.Cmd.cmdloop") as mock_cmdloop,
+        ):
+            cmdloop_thread = threading.Thread(target=shell.cmdloop, daemon=True)
+            cmdloop_thread.start()
+            cmdloop_thread.join(timeout=2)
+
+            # cmdloop should have completed even though init is still running
+            assert not cmdloop_thread.is_alive()
+            mock_play.assert_called_once()
+            mock_cmdloop.assert_called_once()
+            assert not shell._init_complete.is_set()
+
+        # Clean up: let the background init finish
+        init_release.set()
+        shell._init_thread.join(timeout=2)
 
     def test_prompt_and_intro(self):
         """Test shell prompt is set and cmdloop wires play_animation to intro."""
