@@ -49,6 +49,9 @@ def shell():
         with patch.object(pyrit_shell.PyRITShell, "_background_init"):
             s = pyrit_shell.PyRITShell()
         # Manually set the state that _background_init would have set
+        from pyrit.cli import frontend_core as fc_module
+
+        s._fc = fc_module
         s.context = mock_context
         s.default_database = mock_context._database
         s.default_log_level = mock_context._log_level
