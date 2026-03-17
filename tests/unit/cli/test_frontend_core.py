@@ -684,6 +684,22 @@ class TestParseRunArguments:
         with pytest.raises(ValueError, match="requires a value"):
             frontend_core.parse_run_arguments(args_string="test_scenario --max-concurrency")
 
+    @pytest.mark.parametrize(
+        ("args_string", "flag"),
+        [
+            ("test_scenario --initializers --max-retries 2", "--initializers"),
+            ("test_scenario --initialization-scripts --max-retries 2", "--initialization-scripts"),
+            ("test_scenario --env-files --database InMemory", "--env-files"),
+            ("test_scenario --strategies --max-retries 2", "--strategies"),
+            ("test_scenario -s --max-retries 2", "-s"),
+            ("test_scenario --dataset-names --max-dataset-size 5", "--dataset-names"),
+        ],
+    )
+    def test_parse_run_arguments_list_flags_require_values(self, args_string: str, flag: str):
+        """Test list-style arguments require at least one value."""
+        with pytest.raises(ValueError, match=rf"{flag} requires at least one value"):
+            frontend_core.parse_run_arguments(args_string=args_string)
+
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("patch_central_database")
