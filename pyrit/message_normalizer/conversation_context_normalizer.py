@@ -23,6 +23,13 @@ class ConversationContextNormalizer(MessageStringNormalizer):
         ...
     """
 
+    _ROLE_LABELS = {
+        "user": "User",
+        "assistant": "Assistant",
+        "tool": "Tool",
+        "developer": "Developer",
+    }
+
     async def normalize_string_async(self, messages: list[Message]) -> str:
         """
         Normalize a list of messages into a turn-based context string.
@@ -55,7 +62,7 @@ class ConversationContextNormalizer(MessageStringNormalizer):
 
                 # Format the piece content
                 content = self._format_piece_content(piece)
-                role_label = "User" if piece.api_role == "user" else "Assistant"
+                role_label = self._ROLE_LABELS.get(piece.api_role, piece.api_role.capitalize())
                 context_parts.append(f"{role_label}: {content}")
 
         return "\n".join(context_parts)

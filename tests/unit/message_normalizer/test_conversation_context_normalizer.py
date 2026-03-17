@@ -108,3 +108,31 @@ class TestConversationContextNormalizerNormalizeStringAsync:
 
         assert "converted text" in result
         assert "(original: original text)" in result
+
+    @pytest.mark.asyncio
+    async def test_preserves_tool_role_label(self):
+        """Test that tool messages keep the Tool label in context output."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_message("user", "Call the weather tool"),
+            _make_message("tool", "72F and sunny"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert "Tool: 72F and sunny" in result
+        assert "Assistant: 72F and sunny" not in result
+
+    @pytest.mark.asyncio
+    async def test_preserves_developer_role_label(self):
+        """Test that developer messages keep the Developer label in context output."""
+        normalizer = ConversationContextNormalizer()
+        messages = [
+            _make_message("user", "Use concise units"),
+            _make_message("developer", "Prefer metric units"),
+        ]
+
+        result = await normalizer.normalize_string_async(messages)
+
+        assert "Developer: Prefer metric units" in result
+        assert "Assistant: Prefer metric units" not in result
