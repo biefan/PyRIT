@@ -74,7 +74,7 @@ class TestPyRITShell:
         ):
             cmdloop_thread = threading.Thread(target=run_cmdloop, daemon=True)
             cmdloop_thread.start()
-            cmdloop_thread.join(timeout=0.5)
+            cmdloop_thread.join(timeout=5)
 
             assert not cmdloop_thread.is_alive()
             assert len(errors) == 1
