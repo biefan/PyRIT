@@ -3,6 +3,7 @@
 
 import os
 import tempfile
+import csv
 from collections.abc import Sequence
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -149,5 +150,84 @@ def test_export_all_conversations_with_scores_empty_data(sqlite_instance: Memory
             assert exported_data == []
     finally:
         # Clean up the temp file
+        if file_path.exists():
+            os.remove(file_path)
+
+
+def test_export_all_conversations_with_scores_csv_format(sqlite_instance: MemoryInterface):
+    sqlite_instance.exporter = MemoryExporter()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".csv") as temp_file:
+        file_path = Path(temp_file.name)
+        temp_file.close()
+
+    try:
+        with (
+            patch.object(sqlite_instance, "get_message_pieces") as mock_get_pieces,
+            patch.object(sqlite_instance, "get_prompt_scores") as mock_get_scores,
+        ):
+            mock_piece = MagicMock()
+            mock_piece.id = "piece_id_1234"
+            mock_piece.to_dict.return_value = {
+                "id": "piece_id_1234",
+                "converted_value": "sample piece",
+            }
+
+            mock_score = MagicMock()
+            mock_score.message_piece_id = "piece_id_1234"
+            mock_score.to_dict.return_value = {"message_piece_id": "piece_id_1234", "score_value": 10}
+
+            mock_get_pieces.return_value = [mock_piece]
+            mock_get_scores.return_value = [mock_score]
+
+            sqlite_instance.export_conversations(file_path=file_path, export_type="csv")
+
+            with open(file_path, newline="") as exported_file:
+                reader = csv.DictReader(exported_file)
+                assert reader.fieldnames == ["id", "converted_value", "scores"]
+                rows = list(reader)
+
+            assert len(rows) == 1
+            assert rows[0]["id"] == "piece_id_1234"
+            assert rows[0]["converted_value"] == "sample piece"
+    finally:
+        if file_path.exists():
+            os.remove(file_path)
+
+
+def test_export_all_conversations_with_scores_markdown_format(sqlite_instance: MemoryInterface):
+    sqlite_instance.exporter = MemoryExporter()
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".md") as temp_file:
+        file_path = Path(temp_file.name)
+        temp_file.close()
+
+    try:
+        with (
+            patch.object(sqlite_instance, "get_message_pieces") as mock_get_pieces,
+            patch.object(sqlite_instance, "get_prompt_scores") as mock_get_scores,
+        ):
+            mock_piece = MagicMock()
+            mock_piece.id = "piece_id_1234"
+            mock_piece.to_dict.return_value = {
+                "id": "piece_id_1234",
+                "converted_value": "sample piece",
+            }
+
+            mock_score = MagicMock()
+            mock_score.message_piece_id = "piece_id_1234"
+            mock_score.to_dict.return_value = {"message_piece_id": "piece_id_1234", "score_value": 10}
+
+            mock_get_pieces.return_value = [mock_piece]
+            mock_get_scores.return_value = [mock_score]
+
+            sqlite_instance.export_conversations(file_path=file_path, export_type="md")
+
+            exported_content = file_path.read_text(encoding="utf-8")
+
+            assert exported_content.startswith("| id | converted_value | scores |")
+            assert "piece_id_1234" in exported_content
+            assert "sample piece" in exported_content
+    finally:
         if file_path.exists():
             os.remove(file_path)

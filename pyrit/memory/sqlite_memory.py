@@ -34,6 +34,14 @@ logger = logging.getLogger(__name__)
 Model = TypeVar("Model")
 
 
+class _ExportableConversationPiece:
+    def __init__(self, data: dict[str, Any]) -> None:
+        self._data = data
+
+    def to_dict(self) -> dict[str, Any]:
+        return self._data
+
+
 class SQLiteMemory(MemoryInterface, metaclass=Singleton):
     """
     A memory interface that uses SQLite as the backend database.
@@ -418,9 +426,18 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             piece_data["scores"] = [score.to_dict() for score in piece_scores]
             merged_data.append(piece_data)
 
-        # Export to JSON manually since the exporter expects objects but we have dicts
-        with open(file_path, "w") as f:
-            json.dump(merged_data, f, indent=4)
+        if not merged_data:
+            if export_type == "json":
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(merged_data, f, indent=4)
+            elif export_type in self.exporter.export_strategies:
+                file_path.write_text("", encoding="utf-8")
+            else:
+                raise ValueError(f"Unsupported export format: {export_type}")
+            return file_path
+
+        exportable_pieces = [_ExportableConversationPiece(data=piece_data) for piece_data in merged_data]
+        self.exporter.export_data(exportable_pieces, file_path=file_path, export_type=export_type)
         return file_path
 
     def print_schema(self) -> None:
