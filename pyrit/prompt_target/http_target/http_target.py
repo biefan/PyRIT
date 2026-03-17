@@ -237,8 +237,9 @@ class HTTPTarget(PromptTarget):
 
         body = ""
 
-        # Split the request into headers and body by finding the double newlines (\n\n)
-        request_parts = http_request.strip().split("\n\n", 1)
+        # Split the request into headers and body by finding the double newlines (\n\n).
+        # Preserve body whitespace exactly as provided in the raw request.
+        request_parts = http_request.split("\n\n", 1)
 
         # Parse out the header components
         header_lines = request_parts[0].strip().split("\n")
