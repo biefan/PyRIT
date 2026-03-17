@@ -129,6 +129,7 @@ class HTTPXAPITarget(HTTPTarget):
                         method=self.method,
                         url=self.http_url,
                         headers=self.headers,
+                        params=self.params,
                         files=files,
                         follow_redirects=True,
                     )

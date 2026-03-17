@@ -47,6 +47,34 @@ async def test_send_prompt_async_file_upload(mock_request, patch_central_databas
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_file_upload_preserves_query_params(mock_request, patch_central_database):
+    with tempfile.NamedTemporaryFile(delete=False) as tmp:
+        tmp.write(b"This is a mock PDF content")
+        tmp.flush()
+        file_path = tmp.name
+
+    message_piece = MessagePiece(role="user", original_value="mock", converted_value=file_path)
+    message = Message(message_pieces=[message_piece])
+
+    mock_response = MagicMock()
+    mock_response.content = b'{"message": "File uploaded successfully"}'
+    mock_request.return_value = mock_response
+
+    target = HTTPXAPITarget(
+        http_url="http://example.com/upload/",
+        method="POST",
+        params={"alpha": "1"},
+        timeout=180,
+    )
+    await target.send_prompt_async(message=message)
+
+    assert mock_request.call_args.kwargs["params"] == {"alpha": "1"}
+
+    os.unlink(file_path)
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_no_file(mock_request, patch_central_database):
     # Create a MessagePiece with converted_value that does not point to a valid file.
     message_piece = MessagePiece(role="user", original_value="mock", converted_value="non_existent_file.pdf")
