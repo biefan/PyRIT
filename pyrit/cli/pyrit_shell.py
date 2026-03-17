@@ -19,6 +19,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
+
     from pyrit.cli import frontend_core
     from pyrit.models.scenario_result import ScenarioResult
 
@@ -62,50 +64,32 @@ class PyRITShell(cmd.Cmd):
     def __init__(
         self,
         *,
-        context: Optional[frontend_core.FrontendCore] = None,
         no_animation: bool = False,
-        context_kwargs: Optional[dict[str, Any]] = None,
+        **context_kwargs: Any,
     ) -> None:
         """
         Initialize the PyRIT shell.
 
-        Accepts either a pre-created context (for testing or when imports are already done)
-        or context_kwargs for deferred creation in the background thread.
+        The heavy ``frontend_core`` import, ``FrontendCore`` construction, and
+        ``initialize_async`` call all happen on a background thread so the
+        shell prompt appears immediately.
 
         Args:
-            context: Pre-created PyRIT context. If provided, only ``initialize_async``
-                runs in the background.
             no_animation: If True, skip the animated startup banner.
-            context_kwargs: Keyword arguments forwarded to ``FrontendCore()``.
-                When provided (and *context* is ``None``), the heavy
-                ``frontend_core`` import and context construction happen on
-                the background thread so the shell prompt appears immediately.
-
-        Raises:
-            ValueError: If both *context* and *context_kwargs* are provided.
+            **context_kwargs: Keyword arguments forwarded to ``FrontendCore()``.
         """
         super().__init__()
         self._no_animation = no_animation
-
-        if context is not None and context_kwargs is not None:
-            raise ValueError("Cannot specify both context and context_kwargs")
-
         self._context_kwargs = context_kwargs
 
         # Track scenario execution history: list of (command_string, ScenarioResult) tuples
         self._scenario_history: list[tuple[str, ScenarioResult]] = []
 
-        if context is not None:
-            self.context = context
-            self.default_database = context._database
-            self.default_log_level: Optional[int] = context._log_level
-            self.default_env_files = context._env_files
-        else:
-            # Will be set by the background thread after importing frontend_core.
-            self.context = None  # type: ignore[assignment]
-            self.default_database = None
-            self.default_log_level = None
-            self.default_env_files = None
+        # Set by the background thread after importing frontend_core.
+        self.context: Optional[frontend_core.FrontendCore] = None
+        self.default_database: Optional[str] = None
+        self.default_log_level: Optional[int] = None
+        self.default_env_files: Optional[Sequence[Path]] = None
 
         # Initialize PyRIT in background thread for faster startup.
         self._init_thread = threading.Thread(target=self._background_init, daemon=True)
@@ -114,21 +98,14 @@ class PyRITShell(cmd.Cmd):
         self._init_thread.start()
 
     def _background_init(self) -> None:
-        """
-        Import heavy modules and initialize PyRIT in the background.
-
-        When *context_kwargs* were provided, this thread performs the expensive
-        ``from pyrit.cli import frontend_core`` import and creates the
-        ``FrontendCore`` context before calling ``initialize_async``.
-        """
+        """Import heavy modules and initialize PyRIT in the background."""
         try:
-            if self.context is None:
-                from pyrit.cli import frontend_core as fc
+            from pyrit.cli import frontend_core as fc
 
-                self.context = fc.FrontendCore(**(self._context_kwargs or {}))
-                self.default_database = self.context._database
-                self.default_log_level = self.context._log_level
-                self.default_env_files = self.context._env_files
+            self.context = fc.FrontendCore(**self._context_kwargs)
+            self.default_database = self.context._database
+            self.default_log_level = self.context._log_level
+            self.default_env_files = self.context._env_files
             asyncio.run(self.context.initialize_async())
         except BaseException as exc:
             self._init_error = exc
@@ -594,14 +571,12 @@ def main() -> int:
     try:
         shell = PyRITShell(
             no_animation=args.no_animation,
-            context_kwargs={
-                "config_file": args.config_file,
-                "database": args.database,
-                "initialization_scripts": None,
-                "initializer_names": None,
-                "env_files": env_files,
-                "log_level": args.log_level,
-            },
+            config_file=args.config_file,
+            database=args.database,
+            initialization_scripts=None,
+            initializer_names=None,
+            env_files=env_files,
+            log_level=args.log_level,
         )
         shell.cmdloop(intro=intro)
         return 0
