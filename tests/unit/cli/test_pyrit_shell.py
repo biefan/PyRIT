@@ -729,8 +729,8 @@ class TestMain:
     """Tests for main function."""
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_default_args(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_default_args(self, mock_play: MagicMock, mock_shell_class: MagicMock):
         """Test main with default arguments."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
@@ -739,15 +739,15 @@ class TestMain:
             result = pyrit_shell.main()
 
         assert result == 0
-        mock_frontend_core.assert_called_once()
-        call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["database"] is None
-        assert call_kwargs["log_level"] == "WARNING"
+        call_kwargs = mock_shell_class.call_args[1]
+        ctx_kw = call_kwargs["context_kwargs"]
+        assert ctx_kw["database"] is None
+        assert ctx_kw["log_level"] == "WARNING"
         mock_shell.cmdloop.assert_called_once()
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_with_database_arg(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_with_database_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
         """Test main with database argument."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
@@ -756,12 +756,12 @@ class TestMain:
             result = pyrit_shell.main()
 
         assert result == 0
-        call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["database"] == "InMemory"
+        ctx_kw = mock_shell_class.call_args[1]["context_kwargs"]
+        assert ctx_kw["database"] == "InMemory"
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_with_log_level_arg(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_with_log_level_arg(self, mock_play: MagicMock, mock_shell_class: MagicMock):
         """Test main with log-level argument."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
@@ -770,12 +770,12 @@ class TestMain:
             result = pyrit_shell.main()
 
         assert result == 0
-        call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["log_level"] == "DEBUG"
+        ctx_kw = mock_shell_class.call_args[1]["context_kwargs"]
+        assert ctx_kw["log_level"] == "DEBUG"
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_with_keyboard_interrupt(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock, capsys):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_with_keyboard_interrupt(self, mock_play: MagicMock, mock_shell_class: MagicMock, capsys):
         """Test main handles keyboard interrupt."""
         mock_shell = MagicMock()
         mock_shell.cmdloop.side_effect = KeyboardInterrupt()
@@ -789,8 +789,8 @@ class TestMain:
         assert "Interrupted" in captured.out
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_with_exception(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock, capsys):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_with_exception(self, mock_play: MagicMock, mock_shell_class: MagicMock, capsys):
         """Test main handles exceptions."""
         mock_shell = MagicMock()
         mock_shell.cmdloop.side_effect = ValueError("Test error")
@@ -803,19 +803,23 @@ class TestMain:
         captured = capsys.readouterr()
         assert "Error:" in captured.out
 
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_creates_context_without_initializers(self, mock_frontend_core: MagicMock):
+    @patch("pyrit.cli.pyrit_shell.PyRITShell")
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_creates_context_without_initializers(self, mock_play: MagicMock, mock_shell_class: MagicMock):
         """Test main creates context without initializers."""
-        with patch("pyrit.cli.pyrit_shell.PyRITShell"), patch("sys.argv", ["pyrit_shell"]):
+        mock_shell = MagicMock()
+        mock_shell_class.return_value = mock_shell
+
+        with patch("sys.argv", ["pyrit_shell"]):
             pyrit_shell.main()
 
-        call_kwargs = mock_frontend_core.call_args[1]
-        assert call_kwargs["initialization_scripts"] is None
-        assert call_kwargs["initializer_names"] is None
+        ctx_kw = mock_shell_class.call_args[1]["context_kwargs"]
+        assert ctx_kw["initialization_scripts"] is None
+        assert ctx_kw["initializer_names"] is None
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_with_no_animation_flag(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_with_no_animation_flag(self, mock_play: MagicMock, mock_shell_class: MagicMock):
         """Test main passes --no-animation flag to PyRITShell."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
@@ -828,8 +832,8 @@ class TestMain:
         assert call_kwargs["no_animation"] is True
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
-    @patch("pyrit.cli.frontend_core.FrontendCore")
-    def test_main_default_animation_enabled(self, mock_frontend_core: MagicMock, mock_shell_class: MagicMock):
+    @patch("pyrit.cli._banner.play_animation", return_value="")
+    def test_main_default_animation_enabled(self, mock_play: MagicMock, mock_shell_class: MagicMock):
         """Test main defaults to animation enabled (no_animation=False)."""
         mock_shell = MagicMock()
         mock_shell_class.return_value = mock_shell
