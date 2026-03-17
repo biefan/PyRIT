@@ -105,6 +105,8 @@ class HTTPXAPITarget(HTTPTarget):
             if isinstance(possible_path, str) and os.path.exists(possible_path):
                 logger.info(f"HTTPXApiTarget: auto-using file_path from {possible_path}")
                 self.file_path = possible_path
+        elif not os.path.exists(self.file_path):
+            raise FileNotFoundError(f"File not found: {self.file_path}")
 
         if not self.http_url:
             raise ValueError("No `http_url` provided for HTTPXApiTarget.")

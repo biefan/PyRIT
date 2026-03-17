@@ -130,6 +130,25 @@ async def test_send_prompt_async_preserves_query_params_for_post(mock_request, p
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_missing_explicit_file_path_raises(mock_request, patch_central_database):
+    message_piece = MessagePiece(role="user", original_value="mock", converted_value="trigger")
+    message = Message(message_pieces=[message_piece])
+
+    target = HTTPXAPITarget(
+        http_url="http://example.com/upload/",
+        method="POST",
+        file_path="/definitely/missing/file.pdf",
+        timeout=180,
+    )
+
+    with pytest.raises(FileNotFoundError, match="File not found"):
+        await target.send_prompt_async(message=message)
+
+    mock_request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_validation(mock_request, patch_central_database):
     # Create an invalid message (empty message_pieces)
     message = MagicMock()
