@@ -80,9 +80,16 @@ class PyRITShell(cmd.Cmd):
                 When provided (and *context* is ``None``), the heavy
                 ``frontend_core`` import and context construction happen on
                 the background thread so the shell prompt appears immediately.
+
+        Raises:
+            ValueError: If both *context* and *context_kwargs* are provided.
         """
         super().__init__()
         self._no_animation = no_animation
+
+        if context is not None and context_kwargs is not None:
+            raise ValueError("Cannot specify both context and context_kwargs")
+
         self._context_kwargs = context_kwargs
 
         # Track scenario execution history: list of (command_string, ScenarioResult) tuples
@@ -107,7 +114,8 @@ class PyRITShell(cmd.Cmd):
         self._init_thread.start()
 
     def _background_init(self) -> None:
-        """Import heavy modules and initialize PyRIT in the background.
+        """
+        Import heavy modules and initialize PyRIT in the background.
 
         When *context_kwargs* were provided, this thread performs the expensive
         ``from pyrit.cli import frontend_core`` import and creates the

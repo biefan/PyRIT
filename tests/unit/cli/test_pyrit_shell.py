@@ -50,6 +50,31 @@ class TestPyRITShell:
         with pytest.raises(RuntimeError, match="Initialization failed"):
             shell._ensure_initialized()
 
+    def test_init_rejects_both_context_and_context_kwargs(self):
+        """Test that passing both context and context_kwargs raises ValueError."""
+        mock_context = MagicMock()
+        with pytest.raises(ValueError, match="Cannot specify both"):
+            pyrit_shell.PyRITShell(context=mock_context, context_kwargs={"database": "SQLite"})
+
+    @patch("pyrit.cli.frontend_core.FrontendCore")
+    def test_init_with_context_kwargs_creates_context_in_background(self, mock_fc_class: MagicMock):
+        """Test that context_kwargs defers FrontendCore creation to the background thread."""
+        mock_fc = MagicMock()
+        mock_fc._database = "InMemory"
+        mock_fc._log_level = "WARNING"
+        mock_fc._env_files = None
+        mock_fc.initialize_async = AsyncMock()
+        mock_fc_class.return_value = mock_fc
+
+        shell = pyrit_shell.PyRITShell(context_kwargs={"database": "InMemory", "log_level": "WARNING"})
+        shell._init_thread.join(timeout=5)
+
+        assert shell._init_complete.is_set()
+        assert shell.context is mock_fc
+        assert shell.default_database == "InMemory"
+        mock_fc_class.assert_called_once_with(database="InMemory", log_level="WARNING")
+        mock_fc.initialize_async.assert_called_once()
+
     def test_cmdloop_does_not_hang_when_background_init_fails(self):
         """Test cmdloop surfaces background initialization failures instead of waiting forever."""
         mock_context = MagicMock()
