@@ -82,6 +82,10 @@ def test_get_file_name_subdirectory():
     assert "{{ prompt }}" not in result
 
 
+def test_get_jailbreak_templates_includes_subdirectory_templates():
+    assert "nova.yaml" in TextJailBreak.get_jailbreak_templates()
+
+
 def test_all_templates_render_without_syntax_errors(jailbreak_dir):
     """Test that all jailbreak templates can be successfully rendered with a test prompt."""
     yaml_files = [f for f in jailbreak_dir.rglob("*.yaml") if "multi_parameter" not in f.parts]

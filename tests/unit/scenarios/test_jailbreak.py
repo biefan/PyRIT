@@ -179,6 +179,12 @@ class TestJailbreakInitialization:
         with pytest.raises(ValueError):
             Jailbreak(num_templates=mock_random_num_templates, jailbreak_names=mock_templates)
 
+    def test_init_accepts_subdirectory_jailbreak_names(self, mock_objective_scorer, mock_memory_seed_groups):
+        """Test that explicit jailbreak names can reference templates stored in subdirectories."""
+        with patch.object(Jailbreak, "_resolve_seed_groups", return_value=mock_memory_seed_groups):
+            scenario = Jailbreak(objective_scorer=mock_objective_scorer, jailbreak_names=["nova.yaml"])
+            assert scenario._jailbreaks == ["nova.yaml"]
+
     @pytest.mark.asyncio
     async def test_init_raises_exception_when_no_datasets_available(self, mock_objective_target, mock_objective_scorer):
         """Test that initialization raises ValueError when datasets are not available in memory."""

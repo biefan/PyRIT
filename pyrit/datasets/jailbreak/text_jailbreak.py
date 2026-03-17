@@ -222,7 +222,7 @@ class TextJailBreak:
             ValueError: If no jailbreak templates are found in the jailbreak directory.
             ValueError: If n is larger than the number of templates that exist.
         """
-        jailbreak_template_names = [str(f.stem) + ".yaml" for f in JAILBREAK_TEMPLATES_PATH.glob("*.yaml")]
+        jailbreak_template_names = sorted(cls._get_template_cache().keys())
         if not jailbreak_template_names:
             raise ValueError("No jailbreak templates found in the jailbreak directory")
 
