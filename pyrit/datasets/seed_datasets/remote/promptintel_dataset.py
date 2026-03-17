@@ -72,8 +72,8 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
         self,
         *,
         api_key: Optional[str] = None,
-        severity: Optional[PromptIntelSeverity] = None,
-        categories: Optional[list[PromptIntelCategory]] = None,
+        severity: Optional[PromptIntelSeverity | str] = None,
+        categories: Optional[list[PromptIntelCategory | str]] = None,
         search: Optional[str] = None,
         max_prompts: Optional[int] = None,
     ) -> None:
@@ -93,6 +93,8 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
             ValueError: If an invalid severity or category is provided.
         """
         self._api_key = api_key
+        normalized_severity: Optional[PromptIntelSeverity] = None
+        normalized_categories: Optional[list[PromptIntelCategory]] = None
 
         if severity is not None:
             valid_severities = {s.value for s in PromptIntelSeverity}
@@ -101,20 +103,28 @@ class _PromptIntelDataset(_RemoteDatasetLoader):
                 raise ValueError(
                     f"Invalid severity: {sev_value}. Valid values: {[s.value for s in PromptIntelSeverity]}"
                 )
+            normalized_severity = (
+                severity if isinstance(severity, PromptIntelSeverity) else PromptIntelSeverity(sev_value)
+            )
 
         if categories is not None:
             valid_categories = {c.value for c in PromptIntelCategory}
+            category_values = [cat.value if isinstance(cat, PromptIntelCategory) else cat for cat in categories]
             invalid_categories = {
-                cat.value if isinstance(cat, PromptIntelCategory) else cat for cat in categories
-            } - valid_categories
+                category_value for category_value in category_values if category_value not in valid_categories
+            }
             if invalid_categories:
                 raise ValueError(
                     f"Invalid categories: {', '.join(str(c) for c in invalid_categories)}. "
                     f"Valid values: {[c.value for c in PromptIntelCategory]}"
                 )
+            normalized_categories = [
+                category if isinstance(category, PromptIntelCategory) else PromptIntelCategory(category)
+                for category in categories
+            ]
 
-        self._severity = severity
-        self._categories = categories
+        self._severity = normalized_severity
+        self._categories = normalized_categories
         self._search = search
         self._max_prompts = max_prompts
         self.source = "https://promptintel.novahunting.ai"

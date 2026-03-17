@@ -348,8 +348,30 @@ class TestPromptIntelDatasetFilters:
         assert call_kwargs.kwargs["params"]["severity"] == "critical"
 
     @pytest.mark.asyncio
+    async def test_string_severity_filter_passed_to_api(self, api_key, mock_promptintel_response):
+        loader = _PromptIntelDataset(api_key=api_key, severity="critical")
+        mock_resp = _make_mock_response(json_data=mock_promptintel_response)
+
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            await loader.fetch_dataset()
+
+        call_kwargs = mock_get.call_args
+        assert call_kwargs.kwargs["params"]["severity"] == "critical"
+
+    @pytest.mark.asyncio
     async def test_category_filter_passed_to_api(self, api_key, mock_promptintel_response):
         loader = _PromptIntelDataset(api_key=api_key, categories=[PromptIntelCategory.MANIPULATION])
+        mock_resp = _make_mock_response(json_data=mock_promptintel_response)
+
+        with patch("requests.get", return_value=mock_resp) as mock_get:
+            await loader.fetch_dataset()
+
+        call_kwargs = mock_get.call_args
+        assert call_kwargs.kwargs["params"]["category"] == "manipulation"
+
+    @pytest.mark.asyncio
+    async def test_string_category_filter_passed_to_api(self, api_key, mock_promptintel_response):
+        loader = _PromptIntelDataset(api_key=api_key, categories=["manipulation"])
         mock_resp = _make_mock_response(json_data=mock_promptintel_response)
 
         with patch("requests.get", return_value=mock_resp) as mock_get:
