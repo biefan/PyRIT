@@ -72,3 +72,35 @@ class TestRemoteDatasetLoader:
         loader._write_cache(cache_file=cache_file, examples=data, file_type="json")
 
         assert cache_file.exists()
+
+    @patch.object(_RemoteDatasetLoader, "_fetch_from_public_url", return_value=[{"key": "value"}])
+    def test_fetch_from_url_supports_query_string_file_type(self, mock_fetch_from_public_url):
+        loader = ConcreteRemoteLoader()
+
+        result = loader._fetch_from_url(
+            source="https://example.com/data.json?download=1",
+            source_type="public_url",
+            cache=False,
+        )
+
+        assert result == [{"key": "value"}]
+        mock_fetch_from_public_url.assert_called_once_with(
+            source="https://example.com/data.json?download=1",
+            file_type="json",
+        )
+
+    @patch.object(_RemoteDatasetLoader, "_fetch_from_public_url", return_value=[{"key": "value"}])
+    def test_fetch_from_url_supports_uppercase_file_type(self, mock_fetch_from_public_url):
+        loader = ConcreteRemoteLoader()
+
+        result = loader._fetch_from_url(
+            source="https://example.com/data.JSON",
+            source_type="public_url",
+            cache=False,
+        )
+
+        assert result == [{"key": "value"}]
+        mock_fetch_from_public_url.assert_called_once_with(
+            source="https://example.com/data.JSON",
+            file_type="json",
+        )
