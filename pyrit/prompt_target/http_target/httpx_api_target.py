@@ -139,7 +139,7 @@ class HTTPXAPITarget(HTTPTarget):
                         method=self.method,
                         url=self.http_url,
                         headers=self.headers,
-                        params=self.params if self.method in {"GET", "HEAD"} else None,
+                        params=self.params,
                         json=self.json_data if self.method in {"POST", "PUT", "PATCH"} else None,
                         data=self.form_data if self.method in {"POST", "PUT", "PATCH"} else None,
                         follow_redirects=True,

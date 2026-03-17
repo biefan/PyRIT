@@ -72,6 +72,36 @@ async def test_send_prompt_async_no_file(mock_request, patch_central_database):
 
 @pytest.mark.asyncio
 @patch("httpx.AsyncClient.request")
+async def test_send_prompt_async_preserves_query_params_for_post(mock_request, patch_central_database):
+    message_piece = MessagePiece(role="user", original_value="mock", converted_value="non_existent_file.pdf")
+    message = Message(message_pieces=[message_piece])
+
+    mock_response = MagicMock()
+    mock_response.content = b'{"status": "ok"}'
+    mock_request.return_value = mock_response
+
+    target = HTTPXAPITarget(
+        http_url="http://example.com/data/",
+        method="POST",
+        params={"alpha": "1"},
+        json_data={"payload": "value"},
+        timeout=180,
+    )
+    await target.send_prompt_async(message=message)
+
+    mock_request.assert_called_once_with(
+        method="POST",
+        url="http://example.com/data/",
+        headers={},
+        params={"alpha": "1"},
+        json={"payload": "value"},
+        data=None,
+        follow_redirects=True,
+    )
+
+
+@pytest.mark.asyncio
+@patch("httpx.AsyncClient.request")
 async def test_send_prompt_async_validation(mock_request, patch_central_database):
     # Create an invalid message (empty message_pieces)
     message = MagicMock()
