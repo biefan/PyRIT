@@ -74,6 +74,24 @@ def test_seed_prompt_initialization(seed_prompt_fixture):
     assert seed_prompt_fixture.parameters == ["param1"]
 
 
+@pytest.mark.parametrize(
+    ("suffix", "expected_data_type"),
+    [
+        (".PNG", "image_path"),
+        (".WAV", "audio_path"),
+    ],
+)
+def test_seed_prompt_infers_file_type_from_uppercase_extension(suffix, expected_data_type):
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp_file:
+        file_path = temp_file.name
+
+    try:
+        seed_prompt = SeedPrompt(value=file_path)
+        assert seed_prompt.data_type == expected_data_type
+    finally:
+        os.remove(file_path)
+
+
 def test_seed_prompt_render_template_success(seed_prompt_fixture):
     seed_prompt_fixture.value = "Test prompt with param1={{ param1 }}"
     result = seed_prompt_fixture.render_template_value(param1="value1")
