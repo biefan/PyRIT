@@ -457,8 +457,7 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
             result["max_dataset_size"] = validate_integer(parts[i], name="--max-dataset-size", min_value=1)
             i += 1
         else:
-            _logger.warning(f"Unknown argument: {parts[i]}")
-            i += 1
+            raise ValueError(f"Unknown argument: {parts[i]}")
 
     return result
 
