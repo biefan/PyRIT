@@ -25,6 +25,7 @@ if TYPE_CHECKING:
     from pyrit.models.scenario_result import ScenarioResult
 
 from pyrit.cli import _banner as banner
+from pyrit.common.deprecation import print_deprecation_message
 
 
 class PyRITShell(cmd.Cmd):
@@ -116,8 +117,6 @@ class PyRITShell(cmd.Cmd):
                     "Cannot pass 'context' together with FrontendCore keyword arguments "
                     f"({', '.join(self._context_kwargs)}). Use one or the other."
                 )
-            from pyrit.common.deprecation import print_deprecation_message
-
             print_deprecation_message(
                 old_item="PyRITShell(context=...)",
                 new_item="PyRITShell(database=..., log_level=..., ...)",
@@ -180,13 +179,12 @@ class PyRITShell(cmd.Cmd):
             # Play animation immediately while background init continues.
             # Suppress logging during the animation so log lines don't corrupt
             # the ANSI cursor-positioned frames.
-            root_logger = logging.getLogger()
-            prev_level = root_logger.level
-            root_logger.setLevel(logging.CRITICAL)
+            prev_disable = logging.root.manager.disable
+            logging.disable(logging.CRITICAL)
             try:
                 intro = banner.play_animation(no_animation=self._no_animation)
             finally:
-                root_logger.setLevel(prev_level)
+                logging.disable(prev_disable)
 
             # If init already failed while the animation played, surface it now.
             if self._init_complete.is_set():
@@ -426,9 +424,9 @@ class PyRITShell(cmd.Cmd):
     def do_help(self, arg: str) -> None:
         """Show help. Usage: help [command]."""
         if not arg:
-            self._ensure_initialized()
+            from pyrit.cli._cli_args import ARG_HELP, AZURE_SQL, IN_MEMORY, SQLITE
 
-            # Show general help
+            # Show general help (no full init needed — ARG_HELP is lightweight)
             super().do_help(arg)
             print("\n" + "=" * 70)
             print("Shell Startup Options:")
@@ -447,7 +445,7 @@ class PyRITShell(cmd.Cmd):
             print("Run Command Options (specified when running scenarios):")
             print("=" * 70)
             print("  --initializers <name> [<name> ...]  (REQUIRED)")
-            print(f"      {self._fc.ARG_HELP['initializers']}")
+            print(f"      {ARG_HELP['initializers']}")
             print("      Every scenario requires at least one initializer")
             print("      Example: run foundry --initializers openai_objective_target load_default_datasets")
             print("      With params: run foundry --initializers target:tags=default,scorer")
@@ -456,22 +454,25 @@ class PyRITShell(cmd.Cmd):
             )
             print()
             print("  --initialization-scripts <path> [<path> ...]  (Alternative to --initializers)")
-            print(f"      {self._fc.ARG_HELP['initialization_scripts']}")
+            print(f"      {ARG_HELP['initialization_scripts']}")
             print("      Example: run foundry --initialization-scripts ./my_init.py")
             print()
             print("  --strategies, -s <s1> [<s2> ...]")
-            print(f"      {self._fc.ARG_HELP['scenario_strategies']}")
+            print(f"      {ARG_HELP['scenario_strategies']}")
             print("      Example: run garak.encoding --strategies base64 rot13")
             print()
             print("  --max-concurrency <N>")
-            print(f"      {self._fc.ARG_HELP['max_concurrency']}")
+            print(f"      {ARG_HELP['max_concurrency']}")
             print()
             print("  --max-retries <N>")
-            print(f"      {self._fc.ARG_HELP['max_retries']}")
+            print(f"      {ARG_HELP['max_retries']}")
             print()
             print("  --memory-labels <JSON>")
-            print(f"      {self._fc.ARG_HELP['memory_labels']}")
+            print(f"      {ARG_HELP['memory_labels']}")
             print('      Example: run foundry --memory-labels \'{"env":"test"}\'')
+            print()
+            print(f"  --database <type>               Override ({IN_MEMORY}, {SQLITE}, {AZURE_SQL})")
+            print("  --log-level <level>             Override (DEBUG, INFO, WARNING, ERROR, CRITICAL)")
             print()
             print("Start the shell like:")
             print("  pyrit_shell")
@@ -537,7 +538,7 @@ def main() -> int:
     """
     import argparse
 
-    from pyrit.cli._cli_args import ARG_HELP, AZURE_SQL, IN_MEMORY, SQLITE
+    from pyrit.cli._cli_args import ARG_HELP, AZURE_SQL, IN_MEMORY, SQLITE, validate_log_level
 
     parser = argparse.ArgumentParser(
         prog="pyrit_shell",
@@ -587,20 +588,25 @@ def main() -> int:
 
     args = parser.parse_args()
 
-    # Resolve env file paths (lightweight — no heavy imports needed).
+    # Resolve and validate env file paths (lightweight — no heavy imports needed).
     env_files: Optional[list[Path]] = None
     if args.env_files:
-        env_files = [Path(p).resolve() for p in args.env_files]
+        from pyrit.cli._cli_args import resolve_env_files
+
+        try:
+            env_files = resolve_env_files(env_file_paths=args.env_files)
+        except ValueError as e:
+            print(f"Error: {e}")
+            return 1
 
     # Play the banner immediately, before heavy imports.
     # Suppress logging so background-thread output doesn't corrupt the animation.
-    root_logger = logging.getLogger()
-    prev_level = root_logger.level
-    root_logger.setLevel(logging.CRITICAL)
+    prev_disable = logging.root.manager.disable
+    logging.disable(logging.CRITICAL)
     try:
         intro = banner.play_animation(no_animation=args.no_animation)
     finally:
-        root_logger.setLevel(prev_level)
+        logging.disable(prev_disable)
 
     # Create shell with deferred initialization — the background thread
     # will import frontend_core, create the FrontendCore context, and call
@@ -613,7 +619,7 @@ def main() -> int:
             initialization_scripts=None,
             initializer_names=None,
             env_files=env_files,
-            log_level=args.log_level,
+            log_level=validate_log_level(log_level=args.log_level),
         )
         shell.cmdloop(intro=intro)
         return 0

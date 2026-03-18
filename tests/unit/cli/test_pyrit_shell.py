@@ -6,6 +6,7 @@ Unit tests for the pyrit_shell CLI module.
 """
 
 import cmd
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -637,7 +638,7 @@ class TestMain:
         assert result == 0
         call_kwargs = mock_shell_class.call_args[1]
         assert call_kwargs["database"] is None
-        assert call_kwargs["log_level"] == "WARNING"
+        assert call_kwargs["log_level"] == logging.WARNING
         mock_shell.cmdloop.assert_called_once()
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
@@ -666,7 +667,7 @@ class TestMain:
 
         assert result == 0
         call_kwargs = mock_shell_class.call_args[1]
-        assert call_kwargs["log_level"] == "DEBUG"
+        assert call_kwargs["log_level"] == logging.DEBUG
 
     @patch("pyrit.cli.pyrit_shell.PyRITShell")
     @patch("pyrit.cli._banner.play_animation", return_value="")

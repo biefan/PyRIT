@@ -349,7 +349,7 @@ def parse_run_arguments(*, args_string: str) -> dict[str, Any]:
     Returns:
         Dictionary with parsed arguments:
             - scenario_name: str
-            - initializers: Optional[list[str]]
+            - initializers: Optional[list[str | dict[str, Any]]]
             - initialization_scripts: Optional[list[str]]
             - scenario_strategies: Optional[list[str]]
             - max_concurrency: Optional[int]

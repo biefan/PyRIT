@@ -44,7 +44,8 @@ def test_pyrit_shell_module_imports_within_budget() -> None:
 
     elapsed_str = result.stdout.strip()
     assert result.returncode == 0, (
-        f"pyrit_shell module import took {elapsed_str}s, "
+        f"pyrit_shell module import took {elapsed_str or '?'}s, "
         f"exceeding the {_MAX_IMPORT_SECONDS}s budget. "
-        "Check for heavy top-level imports in pyrit_shell.py."
+        f"Check for heavy top-level imports in pyrit_shell.py.\n"
+        f"returncode={result.returncode}\nstderr: {result.stderr.strip()}"
     )
