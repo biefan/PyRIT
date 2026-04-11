@@ -8,7 +8,7 @@ from collections.abc import MutableSequence, Sequence
 from contextlib import closing, suppress
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Optional, TypeVar, Union
+from typing import Any, Optional, TypeVar, Union, cast
 
 from sqlalchemy import and_, create_engine, func, or_, text
 from sqlalchemy.engine.base import Engine
@@ -482,6 +482,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
 
         Returns:
             Path: The path to the exported file.
+
+        Raises:
+            ValueError: If the specified export format is not supported.
         """
         # Import here to avoid circular import issues
         from pyrit.memory.memory_exporter import MemoryExporter
@@ -541,7 +544,9 @@ class SQLiteMemory(MemoryInterface, metaclass=Singleton):
             return file_path
 
         exportable_pieces = [_ExportableConversationPiece(data=piece_data) for piece_data in merged_data]
-        self.exporter.export_data(exportable_pieces, file_path=file_path, export_type=export_type)
+        self.exporter.export_data(
+            cast("list[MessagePiece]", exportable_pieces), file_path=file_path, export_type=export_type
+        )
         return file_path
 
     def print_schema(self) -> None:
