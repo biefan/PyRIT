@@ -232,7 +232,7 @@ class TextJailBreak:
                     f"Attempted to pull {num_templates} jailbreaks from a dataset"
                     f" with only {len(jailbreak_template_names)} jailbreaks!"
                 )
-            jailbreak_template_names = random.choices(jailbreak_template_names, k=num_templates)
+            jailbreak_template_names = random.sample(jailbreak_template_names, k=num_templates)
         return jailbreak_template_names
 
     def get_jailbreak_system_prompt(self) -> str:
