@@ -390,6 +390,9 @@ class AttackService:
         for conv_id in active_conv_ids:
             stats = stats_map.get(conv_id)
             created_at = stats.created_at if stats else None
+            # SQLite returns naive datetimes — normalize to UTC (same pattern as _ensure_utc)
+            if created_at is not None and created_at.tzinfo is None:
+                created_at = created_at.replace(tzinfo=timezone.utc)
             conversations.append(
                 ConversationSummary(
                     conversation_id=conv_id,
@@ -399,10 +402,12 @@ class AttackService:
                 )
             )
 
-        # Sort all conversations by created_at (earliest first, None last)
-        conversations.sort(
-            key=lambda c: (c.created_at is None, c.created_at or datetime.min.replace(tzinfo=timezone.utc))
-        )
+        # Sort conversations by created_at (earliest first). In-flight conversations
+        # have no stored messages yet so created_at is None — treat them as the most
+        # recent (they were just created) so they sort after older conversations
+        # instead of jumping to an arbitrary position.
+        now = datetime.now(timezone.utc)
+        conversations.sort(key=lambda c: c.created_at or now)
 
         return AttackConversationsResponse(
             attack_result_id=attack_result_id,
@@ -729,6 +734,18 @@ class AttackService:
                     children=new_children,
                 )
                 update_fields["attack_identifier"] = new_aid.to_dict()
+                # Also update atomic_attack_identifier so get_attack_strategy_identifier() sees the change
+                if ar.atomic_attack_identifier:
+                    atomic = ComponentIdentifier.from_dict(ar.atomic_attack_identifier.to_dict())
+                    atomic_children = dict(atomic.children)
+                    atomic_children["attack"] = new_aid
+                    new_atomic = ComponentIdentifier(
+                        class_name=atomic.class_name,
+                        class_module=atomic.class_module,
+                        params=dict(atomic.params),
+                        children=atomic_children,
+                    )
+                    update_fields["atomic_attack_identifier"] = new_atomic.to_dict()
 
         self._memory.update_attack_result_by_id(
             attack_result_id=attack_result_id,
@@ -853,11 +870,14 @@ class AttackService:
                         piece.converted_value = file_path
                 continue
 
-            # Already an existing file on disk — keep as-is
-            if Path(piece.original_value).is_file():
-                if piece.converted_value is None:
-                    piece.converted_value = piece.original_value
-                continue
+            # Already an existing file on disk — keep as-is.
+            try:
+                if Path(piece.original_value).is_file():
+                    if piece.converted_value is None:
+                        piece.converted_value = piece.original_value
+                    continue
+            except (OSError, ValueError):
+                pass
 
             # Derive file extension from the MIME type sent by the frontend
             ext = None
