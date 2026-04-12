@@ -258,18 +258,27 @@ class AzureBlobStorageIO(StorageIO):
         """
         Resolve a blob name from either a full blob URL or a relative blob path.
 
+        When a full URL is provided the blob name is extracted from it. The container
+        name embedded in the URL is intentionally discarded — operations always run
+        against the container configured in the constructor.
+
+        Backslashes are normalized to forward slashes so that ``Path`` objects
+        created on Windows still produce valid blob names.
+
         Args:
             path (Union[Path, str]): Blob URL or relative blob path.
 
         Returns:
             str: The resolved blob name.
+
         """
-        path_str = str(path)
-        parsed_url = urlparse(path_str)
-        if parsed_url.scheme and parsed_url.netloc:
+        path_str = str(path).replace("\\", "/")
+        try:
+            # parse_blob_url validates scheme + netloc internally
             _, blob_name = self.parse_blob_url(path_str)
             return blob_name
-        return path_str
+        except ValueError:
+            return path_str
 
     async def read_file(self, path: Union[Path, str]) -> bytes:
         """
@@ -321,8 +330,11 @@ class AzureBlobStorageIO(StorageIO):
         """
         Write data to Azure Blob Storage at the specified path.
 
+        If the provided ``path`` is a full URL, the blob name is extracted from it.
+        If a relative path is provided, it is used as the blob name directly.
+
         Args:
-            path (str): The full Azure Blob Storage URL
+            path (Union[Path, str]): Full blob URL or relative blob path.
             data (bytes): The data to write.
 
         """
