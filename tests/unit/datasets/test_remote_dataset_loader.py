@@ -81,3 +81,4 @@ class TestRemoteDatasetLoader:
 
         assert cache_file.exists()
         assert cache_file.read_text(encoding="utf-8") == ""
+        assert loader._read_cache(cache_file=cache_file, file_type="csv") == []
