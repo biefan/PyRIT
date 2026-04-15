@@ -83,6 +83,26 @@ class TestRemoteDatasetLoader:
         assert cache_file.read_text(encoding="utf-8") == ""
         assert loader._read_cache(cache_file=cache_file, file_type="csv") == []
 
+    def test_get_file_type_strips_query_string(self):
+        loader = ConcreteRemoteLoader()
+        assert loader._get_file_type(source="https://example.com/data.json?download=1") == "json"
+
+    def test_get_file_type_strips_fragment(self):
+        loader = ConcreteRemoteLoader()
+        assert loader._get_file_type(source="https://example.com/data.csv#row5") == "csv"
+
+    def test_get_file_type_lowercases_extension(self):
+        loader = ConcreteRemoteLoader()
+        assert loader._get_file_type(source="https://example.com/data.JSONL") == "jsonl"
+
+    def test_get_file_type_local_path(self):
+        loader = ConcreteRemoteLoader()
+        assert loader._get_file_type(source="/tmp/data.txt") == "txt"
+
+    def test_get_file_type_returns_empty_for_no_extension(self):
+        loader = ConcreteRemoteLoader()
+        assert loader._get_file_type(source="https://example.com/data") == ""
+
     @patch.object(_RemoteDatasetLoader, "_fetch_from_public_url", return_value=[{"key": "value"}])
     def test_fetch_from_url_supports_query_string_file_type(self, mock_fetch_from_public_url):
         loader = ConcreteRemoteLoader()
