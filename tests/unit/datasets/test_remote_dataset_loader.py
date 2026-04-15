@@ -73,6 +73,16 @@ class TestRemoteDatasetLoader:
 
         assert cache_file.exists()
 
+    def test_write_cache_csv_allows_empty_examples(self, tmp_path):
+        loader = ConcreteRemoteLoader()
+        cache_file = tmp_path / "empty.csv"
+
+        loader._write_cache(cache_file=cache_file, examples=[], file_type="csv")
+
+        assert cache_file.exists()
+        assert cache_file.read_text(encoding="utf-8") == ""
+        assert loader._read_cache(cache_file=cache_file, file_type="csv") == []
+
     @patch.object(_RemoteDatasetLoader, "_fetch_from_public_url", return_value=[{"key": "value"}])
     def test_fetch_from_url_supports_query_string_file_type(self, mock_fetch_from_public_url):
         loader = ConcreteRemoteLoader()
