@@ -423,7 +423,10 @@ class TestScenarioPartialAttackCompletion:
         # All 5 results should be in final scenario result
         assert len(result.attack_results["resume_attack"]) == 5
 
-    async def test_run_async_cancellation_persists_progress_cleans_workers_and_resumes(self, mock_objective_target):
+    @pytest.mark.parametrize("cancel_worker", [False, True], ids=["caller-cancelled", "worker-cancelled"])
+    async def test_run_async_cancellation_persists_progress_cleans_workers_and_resumes(
+        self, mock_objective_target, cancel_worker
+    ):
         completed_attack = create_mock_atomic_attack("completed_attack", ["obj1"])
         in_flight_attack = create_mock_atomic_attack("in_flight_attack", ["obj2"])
         queued_attack = create_mock_atomic_attack("queued_attack", ["obj3"])
@@ -455,18 +458,22 @@ class TestScenarioPartialAttackCompletion:
         in_flight_worker_exited = asyncio.Event()
         block_until_cancelled = asyncio.Event()
         persisted_objectives: list[str] = []
+        worker_tasks: list[asyncio.Task] = []
 
         async def run_completed_attack(*args, **kwargs):
+            worker_tasks.append(asyncio.current_task())
             save_attack_results_to_memory([completed_result], atomic_attack=completed_attack)
             persisted_objectives.append(completed_result.objective)
             completed_persisted.set()
             try:
                 await block_until_cancelled.wait()
             finally:
+                await asyncio.sleep(0)
                 completed_worker_exited.set()
 
         async def run_in_flight_attack(*args, **kwargs):
             if in_flight_attack.run_async.call_count == 1:
+                worker_tasks.append(asyncio.current_task())
                 in_flight_started.set()
                 try:
                     await block_until_cancelled.wait()
@@ -505,15 +512,24 @@ class TestScenarioPartialAttackCompletion:
         scenario_task = asyncio.create_task(scenario.run_async())
         await asyncio.wait_for(completed_persisted.wait(), timeout=5.0)
         await asyncio.wait_for(in_flight_started.wait(), timeout=5.0)
-        scenario_task.cancel()
+        task_to_cancel = worker_tasks[1] if cancel_worker else scenario_task
+        task_to_cancel.cancel()
 
-        with pytest.raises(asyncio.CancelledError):
-            await scenario_task
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await scenario_task
 
-        assert completed_worker_exited.is_set()
-        assert in_flight_worker_exited.is_set()
-        queued_attack.run_async.assert_not_called()
-        assert persisted_objectives == ["obj1"]
+            assert completed_worker_exited.is_set()
+            assert in_flight_worker_exited.is_set()
+            assert all(task.done() for task in worker_tasks)
+            assert not scenario._active_atomic_groups
+            queued_attack.run_async.assert_not_called()
+            assert persisted_objectives == ["obj1"]
+        finally:
+            for task in worker_tasks:
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*worker_tasks, return_exceptions=True)
 
         [cancelled_result] = CentralMemory.get_memory_instance().get_scenario_results(
             scenario_result_ids=[scenario._scenario_result_id]

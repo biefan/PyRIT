@@ -1752,6 +1752,8 @@ class Scenario(ABC):
         work persists for resume). If more than one in-flight attack ends up failing,
         every failure is surfaced: a single failure is re-raised as-is, multiple
         failures are wrapped in an ``ExceptionGroup`` so callers see all of them.
+        Cancellation stops queue admission and cancels and drains all workers before
+        propagating, including when it originates inside an atomic attack.
         """
         # Type narrowing: initialize_async always sets _max_concurrency to an int. We hold
         # the narrowed value in a local so the type checker can verify all uses below.
@@ -1800,6 +1802,10 @@ class Scenario(ABC):
                 except Exception as exc:
                     outcomes.append(exc)
                     stop_event.set()
+                except BaseException:
+                    # Stop admission before a ready sibling can take another queued attack.
+                    stop_event.set()
+                    raise
                 finally:
                     self._active_atomic_groups.pop(atomic_group_id, None)
                     pbar.update(1)
@@ -1809,8 +1815,17 @@ class Scenario(ABC):
         # without losing parallelism for the common case where remaining_attacks fits in
         # the budget.
         worker_count = min(max_concurrency, len(remaining_attacks))
+        workers = [asyncio.create_task(worker_async()) for _ in range(worker_count)]
         try:
-            await asyncio.gather(*(worker_async() for _ in range(worker_count)))
+            await asyncio.gather(*workers)
+        except BaseException:
+            # gather does not cancel siblings when a child is cancelled.
+            stop_event.set()
+            for worker in workers:
+                if not worker.done():
+                    worker.cancel()
+            await asyncio.gather(*workers, return_exceptions=True)
+            raise
         finally:
             pbar.close()
 
