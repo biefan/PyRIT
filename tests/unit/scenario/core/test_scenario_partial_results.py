@@ -553,6 +553,51 @@ class TestScenarioPartialAttackCompletion:
         assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
         assert all(len(results) == 1 for results in resumed_result.attack_results.values())
 
+    async def test_worker_cancellation_waits_for_cleanup_despite_caller_cancellation(self, mock_objective_target):
+        cancelled_attack = create_mock_atomic_attack("cancelled", ["obj1"])
+        sibling_attack = create_mock_atomic_attack("sibling", ["obj2"])
+        sibling_started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        allow_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+
+        async def cancelled_run_async(**_kwargs):
+            await sibling_started.wait()
+            raise asyncio.CancelledError("child cancelled")
+
+        async def sibling_run_async(**_kwargs):
+            sibling_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await allow_cleanup.wait()
+                cleanup_finished.set()
+
+        cancelled_attack.run_async = AsyncMock(side_effect=cancelled_run_async)
+        sibling_attack.run_async = AsyncMock(side_effect=sibling_run_async)
+        scenario = ConcreteScenario(
+            name="Cancellation During Cleanup", version=1, atomic_attacks_to_return=[cancelled_attack, sibling_attack]
+        )
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 2})
+        await scenario.initialize_async()
+
+        task = asyncio.create_task(scenario.run_async())
+        try:
+            await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+            task.cancel("caller cancelled during cleanup")
+            await asyncio.sleep(0)
+            allow_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(task, timeout=5)
+            assert cleanup_finished.is_set()
+            assert not scenario._active_atomic_groups
+        finally:
+            allow_cleanup.set()
+            if not task.done():
+                task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+
     async def test_run_async_cancellation_is_not_masked_by_persistence_failure(
         self, mock_objective_target: MagicMock
     ) -> None:

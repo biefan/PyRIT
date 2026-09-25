@@ -1824,7 +1824,16 @@ class Scenario(ABC):
             for worker in workers:
                 if not worker.done():
                     worker.cancel()
-            await asyncio.gather(*workers, return_exceptions=True)
+            drain = asyncio.gather(*workers, return_exceptions=True)
+            caller_cancellation: asyncio.CancelledError | None = None
+            while not drain.done():
+                try:
+                    await asyncio.shield(drain)
+                except asyncio.CancelledError as cancellation:
+                    caller_cancellation = cancellation
+            drain.result()
+            if caller_cancellation is not None:
+                raise caller_cancellation from None
             raise
         finally:
             pbar.close()
