@@ -1,6 +1,7 @@
 # Copyright (c) Microsoft Corporation.
 # Licensed under the MIT license.
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -146,3 +147,46 @@ async def test_batch_task_async_validates_rate_limit():
             task_func=AsyncMock(),
             task_arguments=["item"],
         )
+
+
+@pytest.mark.parametrize("failure_type", [RuntimeError, asyncio.CancelledError])
+async def test_batch_task_failure_finishes_cleanup_and_never_starts_later_batches(failure_type):
+    slow_started = asyncio.Event()
+    finalized = asyncio.Event()
+    calls: list[int] = []
+    slow_tasks: list[asyncio.Task] = []
+
+    async def send_async(*, item):
+        calls.append(item)
+        if item == 1:
+            slow_task = asyncio.current_task()
+            assert slow_task is not None
+            slow_tasks.append(slow_task)
+            slow_started.set()
+            try:
+                await asyncio.Event().wait()
+            finally:
+                await asyncio.sleep(0)
+                finalized.set()
+        await slow_started.wait()
+        raise failure_type("send failed")
+
+    try:
+        with pytest.raises(failure_type, match="send failed"):
+            await asyncio.wait_for(
+                batch_task_async(
+                    batch_size=2,
+                    items_to_batch=[[1, 2, 3]],
+                    task_func=send_async,
+                    task_arguments=["item"],
+                ),
+                timeout=5,
+            )
+        assert finalized.is_set()
+        assert len(slow_tasks) == 1 and slow_tasks[0].done()
+        assert calls == [1, 2]
+    finally:
+        for task in slow_tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*slow_tasks, return_exceptions=True)
