@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 import pytest
 
 from pyrit.exceptions import ScenarioPartialFailureException
+from pyrit.executor.attack import PromptSendingAttack
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.memory import CentralMemory
 from pyrit.models import (
@@ -23,7 +24,8 @@ from pyrit.models import (
 )
 from pyrit.prompt_target import PromptTarget
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from pyrit.scenario.core import AtomicAttack, AttackTechnique, BaselineAttackPolicy, Scenario, ScenarioTechnique
+from tests.unit.mocks import MockPromptTarget
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -597,6 +599,93 @@ class TestScenarioPartialAttackCompletion:
             if not task.done():
                 task.cancel()
             await asyncio.gather(task, return_exceptions=True)
+
+    @pytest.mark.parametrize("cancel_again", [False, True], ids=["single-cancel", "repeated-cancel"])
+    async def test_caller_cancellation_drains_real_target_reset_without_recancelling(self, cancel_again):
+        target = MockPromptTarget()
+        all_started = asyncio.Event()
+        fast_worker_finished = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+        sends: dict[str, asyncio.Task] = {}
+        conversations: dict[str, str] = {}
+
+        async def send_async(*, normalized_conversation):
+            piece = normalized_conversation[-1].get_piece()
+            task = asyncio.current_task()
+            assert task is not None
+            sends[piece.converted_value] = task
+            conversations[piece.conversation_id] = piece.converted_value
+            if len(sends) == 2:
+                all_started.set()
+            await asyncio.Event().wait()
+
+        async def reset_async(*, conversation_id):
+            if conversations[conversation_id] == "slow":
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleanup_finished.set()
+
+        atomics = [
+            AtomicAttack(
+                atomic_attack_name=name,
+                attack_technique=AttackTechnique(attack=PromptSendingAttack(objective_target=target)),
+                seed_groups=[AttackSeedGroup(seeds=[SeedObjective(value=name)])],
+            )
+            for name in ("slow", "fast", "queued")
+        ]
+        scenario = ConcreteScenario(name="Real Target Cleanup", version=1, atomic_attacks_to_return=atomics)
+        scenario.set_params_from_args(args={"objective_target": target, "max_concurrency": 2, "max_retries": 2})
+        await scenario.initialize_async()
+        fast_run_async = atomics[1].run_async
+
+        async def observe_fast_worker_async(**kwargs):
+            worker = asyncio.current_task()
+            assert worker is not None
+            worker.add_done_callback(lambda _: fast_worker_finished.set())
+            return await fast_run_async(**kwargs)
+
+        with (
+            patch.object(target, "_send_prompt_to_target_async", new=send_async),
+            patch.object(target, "reset_conversation_async", new=reset_async),
+            patch.object(atomics[1], "run_async", new=observe_fast_worker_async),
+        ):
+            parent = asyncio.create_task(scenario.run_async())
+            try:
+                await asyncio.wait_for(all_started.wait(), timeout=5)
+                parent.cancel("stop scenario")
+                await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+                await asyncio.wait_for(fast_worker_finished.wait(), timeout=5)
+                assert sends["slow"].cancelling() == 1
+                assert not cleanup_finished.is_set()
+                assert not parent.done()
+                [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+                assert stored.scenario_run_state is ScenarioRunState.IN_PROGRESS
+
+                if cancel_again:
+                    parent.cancel("stop scenario again")
+                    cancellation_delivered = asyncio.Event()
+                    asyncio.get_running_loop().call_soon(cancellation_delivered.set)
+                    await cancellation_delivered.wait()
+                    assert sends["slow"].cancelling() == 1
+                    assert not parent.done()
+
+                release_cleanup.set()
+                with pytest.raises(asyncio.CancelledError):
+                    await asyncio.wait_for(parent, timeout=5)
+                assert cleanup_finished.is_set()
+                assert set(sends) == {"slow", "fast"}
+                assert all(task.done() for task in sends.values())
+                assert not scenario._active_atomic_groups
+                [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+                assert stored.scenario_run_state is ScenarioRunState.CANCELLED
+                assert stored.number_tries == 1
+            finally:
+                release_cleanup.set()
+                if not parent.done():
+                    parent.cancel()
+                await asyncio.gather(parent, *sends.values(), return_exceptions=True)
 
     async def test_run_async_cancellation_is_not_masked_by_persistence_failure(
         self, mock_objective_target: MagicMock
