@@ -90,4 +90,4 @@ async def test_scoring_failure_drains_nested_work_before_returning(
 
     assert cleaned_up_at_return
     assert late_completions == []
-    assert sqlite_instance.get_scores() == []
+    assert sqlite_instance.get_scores(score_type="true_false") == []
