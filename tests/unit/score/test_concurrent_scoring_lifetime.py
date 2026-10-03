@@ -27,7 +27,7 @@ async def test_scoring_failure_drains_nested_work_before_returning(
     original_piece_async = slow._score_piece_async
     original_scorable_async = slow._score_scorable_async
 
-    def store_message(values: list[str]) -> MessageScorable:
+    async def store_message_async(values: list[str]) -> MessageScorable:
         conversation_id = str(uuid4())
         message = Message(
             message_pieces=[
@@ -35,7 +35,7 @@ async def test_scoring_failure_drains_nested_work_before_returning(
                 for value in values
             ]
         )
-        sqlite_instance.add_message_to_memory(request=message)
+        await sqlite_instance.add_message_to_memory_async(request=message)
         return MessageScorable.from_message(message)
 
     async def fail_async(*_args, **_kwargs):
@@ -65,13 +65,17 @@ async def test_scoring_failure_drains_nested_work_before_returning(
 
     async def invoke_async():
         if entry_point == "roots":
-            return await Scorer.score_with_scorers_async(scorable=store_message(["slow"]), scorers=[slow, failing])
+            return await Scorer.score_with_scorers_async(
+                scorable=await store_message_async(["slow"]), scorers=[slow, failing]
+            )
         if entry_point == "composite":
             composite = TrueFalseCompositeScorer(aggregator=TrueFalseScoreAggregator.AND, scorers=[slow, failing])
-            return await composite.score_async(scorable=store_message(["slow"]))
+            return await composite.score_async(scorable=await store_message_async(["slow"]))
         if entry_point == "pieces":
-            return await slow.score_async(scorable=store_message(["slow", "fail"]))
-        return await slow.score_batch_async(scorables=[store_message(["slow"]), store_message(["fail"])], batch_size=2)
+            return await slow.score_async(scorable=await store_message_async(["slow", "fail"]))
+        return await slow.score_batch_async(
+            scorables=[await store_message_async(["slow"]), await store_message_async(["fail"])], batch_size=2
+        )
 
     with (
         patch.object(slow, "_score_piece_async", new=score_piece_async),
@@ -90,4 +94,4 @@ async def test_scoring_failure_drains_nested_work_before_returning(
 
     assert cleaned_up_at_return
     assert late_completions == []
-    assert sqlite_instance.get_scores(score_type="true_false") == []
+    assert await sqlite_instance.get_scores_async(score_type="true_false", include_intermediate=True) == []
