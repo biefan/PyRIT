@@ -555,6 +555,202 @@ class TestScenarioPartialAttackCompletion:
         assert sorted(resumed_result.get_objectives()) == ["obj1", "obj2", "obj3"]
         assert all(len(results) == 1 for results in resumed_result.attack_results.values())
 
+    @pytest.mark.parametrize("max_retries", [0, 1])
+    async def test_run_async_cancellation_waits_for_worker_completion_callbacks_async(
+        self, *, mock_objective_target: MagicMock, max_retries: int
+    ) -> None:
+        attacks = [create_mock_atomic_attack(name, [name]) for name in ("first", "second")]
+        all_started = asyncio.Event()
+        release_workers = asyncio.Event()
+        persisted: set[str] = set()
+        worker_tasks: list[asyncio.Task[None]] = []
+
+        def make_run_async(atomic_attack: MagicMock) -> AsyncMock:
+            async def run_async(**_kwargs: object) -> AttackExecutorResult[AttackResult]:
+                worker = asyncio.current_task()
+                assert worker is not None
+                worker_tasks.append(worker)
+                name = atomic_attack.atomic_attack_name
+                result = AttackResult(
+                    conversation_id=f"conv-{name}",
+                    objective=name,
+                    outcome=AttackOutcome.SUCCESS,
+                    executed_turns=1,
+                )
+                await save_attack_results_to_memory_async([result], atomic_attack=atomic_attack)
+                persisted.add(name)
+                if len(persisted) == len(attacks):
+                    all_started.set()
+                await release_workers.wait()
+                return AttackExecutorResult(completed_results=[result], incomplete_objectives=[])
+
+            return AsyncMock(side_effect=run_async)
+
+        for attack in attacks:
+            attack.run_async = make_run_async(attack)
+        scenario = ConcreteScenario(name="Cancellation Completion Race", version=1, atomic_attacks_to_return=attacks)
+        scenario.set_params_from_args(
+            args={"objective_target": mock_objective_target, "max_concurrency": 2, "max_retries": max_retries}
+        )
+        await scenario.initialize_async()
+
+        parent = asyncio.create_task(scenario.run_async())
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=5)
+            release_workers.set()
+            parent.cancel("stop scenario")
+            with pytest.raises(asyncio.CancelledError, match="stop scenario"):
+                await asyncio.wait_for(parent, timeout=5)
+
+            assert all(worker.done() for worker in worker_tasks)
+            assert not scenario._active_atomic_groups
+            [stored] = await scenario._memory.get_scenario_results_async(
+                scenario_result_ids=[scenario._scenario_result_id]
+            )
+            assert stored.scenario_run_state is ScenarioRunState.CANCELLED
+            assert stored.error_type == "CancelledError"
+            assert stored.number_tries == 1
+            assert sorted(stored.get_objectives()) == ["first", "second"]
+            assert all(attack.run_async.call_count == 1 for attack in attacks)
+        finally:
+            release_workers.set()
+            if not parent.done():
+                parent.cancel()
+            await asyncio.gather(parent, *worker_tasks, return_exceptions=True)
+
+    @pytest.mark.parametrize("cancel_again", [False, True], ids=["single-cancel", "repeated-cancel"])
+    async def test_caller_cancellation_stops_queue_before_ready_sibling_finishes_async(
+        self, *, mock_objective_target: MagicMock, cancel_again: bool
+    ) -> None:
+        slow_attack, sibling_attack, queued_attack = [
+            create_mock_atomic_attack(name, [name]) for name in ("slow", "sibling", "queued")
+        ]
+        all_started = asyncio.Event()
+        release_sibling = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        release_cleanup = asyncio.Event()
+        cleanup_finished = asyncio.Event()
+        worker_tasks: list[asyncio.Task[None]] = []
+
+        async def slow_run_async(**_kwargs: object) -> None:
+            worker = asyncio.current_task()
+            assert worker is not None
+            worker_tasks.append(worker)
+            try:
+                await asyncio.Event().wait()
+            finally:
+                cleanup_started.set()
+                await release_cleanup.wait()
+                cleanup_finished.set()
+
+        async def sibling_run_async(**_kwargs: object) -> AttackExecutorResult[AttackResult]:
+            worker = asyncio.current_task()
+            assert worker is not None
+            worker_tasks.append(worker)
+            all_started.set()
+            await release_sibling.wait()
+            return AttackExecutorResult(completed_results=[], incomplete_objectives=[])
+
+        slow_attack.run_async = AsyncMock(side_effect=slow_run_async)
+        sibling_attack.run_async = AsyncMock(side_effect=sibling_run_async)
+        queued_attack.run_async = AsyncMock(
+            return_value=AttackExecutorResult(completed_results=[], incomplete_objectives=[])
+        )
+        scenario = ConcreteScenario(
+            name="Caller Cancellation Admission",
+            version=1,
+            atomic_attacks_to_return=[slow_attack, sibling_attack, queued_attack],
+        )
+        scenario.set_params_from_args(
+            args={"objective_target": mock_objective_target, "max_concurrency": 2, "max_retries": 2}
+        )
+        await scenario.initialize_async()
+
+        parent = asyncio.create_task(scenario.run_async())
+        try:
+            await asyncio.wait_for(all_started.wait(), timeout=5)
+            release_sibling.set()
+            parent.cancel("stop scenario")
+            await asyncio.wait_for(cleanup_started.wait(), timeout=5)
+            assert not parent.done()
+            assert worker_tasks[0].cancelling() == 1
+            [stored] = await scenario._memory.get_scenario_results_async(
+                scenario_result_ids=[scenario._scenario_result_id]
+            )
+            assert stored.scenario_run_state is ScenarioRunState.IN_PROGRESS
+
+            if cancel_again:
+                parent.cancel("stop scenario again")
+                await asyncio.sleep(0)
+                assert not parent.done()
+                assert worker_tasks[0].cancelling() == 1
+
+            release_cleanup.set()
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(parent, timeout=5)
+            assert cleanup_finished.is_set()
+            assert all(worker.done() for worker in worker_tasks)
+            assert not scenario._active_atomic_groups
+            queued_attack.run_async.assert_not_called()
+            [stored] = await scenario._memory.get_scenario_results_async(
+                scenario_result_ids=[scenario._scenario_result_id]
+            )
+            assert stored.scenario_run_state is ScenarioRunState.CANCELLED
+            assert stored.number_tries == 1
+        finally:
+            release_sibling.set()
+            release_cleanup.set()
+            if not parent.done():
+                parent.cancel()
+            await asyncio.gather(parent, *worker_tasks, return_exceptions=True)
+
+    async def test_run_async_resumes_in_a_task_with_previous_cancellation_async(
+        self, *, mock_objective_target: MagicMock
+    ) -> None:
+        attack = create_mock_atomic_attack("resumed", ["objective"])
+        started = asyncio.Event()
+        completed_result = AttackResult(
+            conversation_id="conv-resumed",
+            objective="objective",
+            outcome=AttackOutcome.SUCCESS,
+            executed_turns=1,
+        )
+
+        async def run_async(**_kwargs: object) -> AttackExecutorResult[AttackResult]:
+            if attack.run_async.call_count == 1:
+                started.set()
+                await asyncio.Event().wait()
+            await save_attack_results_to_memory_async([completed_result], atomic_attack=attack)
+            return AttackExecutorResult(completed_results=[completed_result], incomplete_objectives=[])
+
+        attack.run_async = AsyncMock(side_effect=run_async)
+        scenario = ConcreteScenario(name="Resume After Cancellation", version=1, atomic_attacks_to_return=[attack])
+        scenario.set_params_from_args(args={"objective_target": mock_objective_target, "max_concurrency": 1})
+        await scenario.initialize_async()
+
+        async def cancel_then_resume_async() -> ScenarioResult:
+            with pytest.raises(asyncio.CancelledError):
+                await scenario.run_async()
+            supervisor = asyncio.current_task()
+            assert supervisor is not None
+            assert supervisor.cancelling() == 1
+            return await scenario.run_async()
+
+        parent = asyncio.create_task(cancel_then_resume_async())
+        try:
+            await asyncio.wait_for(started.wait(), timeout=5)
+            parent.cancel("stop first run")
+            result = await asyncio.wait_for(parent, timeout=5)
+            assert result.scenario_run_state is ScenarioRunState.COMPLETED
+            assert result.number_tries == 2
+            assert result.get_objectives() == ["objective"]
+            assert attack.run_async.call_count == 2
+            assert not scenario._active_atomic_groups
+        finally:
+            if not parent.done():
+                parent.cancel()
+            await asyncio.gather(parent, return_exceptions=True)
+
     async def test_worker_cancellation_waits_for_cleanup_despite_caller_cancellation(self, mock_objective_target):
         cancelled_attack = create_mock_atomic_attack("cancelled", ["obj1"])
         sibling_attack = create_mock_atomic_attack("sibling", ["obj2"])
