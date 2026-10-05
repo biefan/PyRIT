@@ -47,7 +47,7 @@ def mock_objective_target():
     return target
 
 
-def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
+async def save_attack_results_to_memory_async(attack_results, *, atomic_attack=None):
     """
     Helper function to save attack results to memory. When ``atomic_attack`` is
     provided, also stamps ``attribution_parent_id`` and ``attribution_data`` on
@@ -63,7 +63,7 @@ def save_attack_results_to_memory(attack_results, *, atomic_attack=None):
                 r.attribution_parent_id = sid
                 r.attribution_data = {"parent_collection": name}
     memory = CentralMemory.get_memory_instance()
-    memory.add_attack_results_to_memory(attack_results=attack_results)
+    (await memory.add_attack_results_to_memory_async(attack_results=attack_results))
 
 
 def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
@@ -178,7 +178,7 @@ class TestScenarioPartialAttackCompletion:
                 incomplete = [("obj3", ValueError("Failed to complete obj3"))]
 
                 # Save completed results to memory
-                save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
+                (await save_attack_results_to_memory_async(completed, atomic_attack=atomic_attack))
 
                 return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
             # Retry: complete the remaining objective
@@ -190,7 +190,7 @@ class TestScenarioPartialAttackCompletion:
                     executed_turns=1,
                 )
             ]
-            save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
+            (await save_attack_results_to_memory_async(completed, atomic_attack=atomic_attack))
             return AttackExecutorResult(completed_results=completed, incomplete_objectives=[])
 
         atomic_attack.run_async = mock_run
@@ -210,8 +210,8 @@ class TestScenarioPartialAttackCompletion:
 
         with patch.object(
             scenario._memory,
-            "update_scenario_run_state",
-            wraps=scenario._memory.update_scenario_run_state,
+            "update_scenario_run_state_async",
+            wraps=scenario._memory.update_scenario_run_state_async,
         ) as update_state:
             result = await scenario.run_async()
 
@@ -255,7 +255,7 @@ class TestScenarioPartialAttackCompletion:
             incomplete = [("obj3", first_error), ("obj4", second_error)]
 
             # Save completed results to memory
-            save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
+            (await save_attack_results_to_memory_async(completed, atomic_attack=atomic_attack))
 
             return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
 
@@ -289,7 +289,7 @@ class TestScenarioPartialAttackCompletion:
         assert isinstance(error, ValueError)
 
         # But the 2 completed results should still be saved
-        scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
+        scenario_results = await CentralMemory.get_memory_instance().get_scenario_results_async(
             scenario_result_ids=[scenario._scenario_result_id]
         )
         assert len(scenario_results) == 1
@@ -325,8 +325,8 @@ class TestScenarioPartialAttackCompletion:
             ),
             patch.object(
                 scenario._memory,
-                "update_scenario_run_state",
-                wraps=scenario._memory.update_scenario_run_state,
+                "update_scenario_run_state_async",
+                wraps=scenario._memory.update_scenario_run_state_async,
             ) as update_state,
         ):
             with pytest.raises(RuntimeError, match="before worker execution"):
@@ -340,7 +340,7 @@ class TestScenarioPartialAttackCompletion:
         ]
         atomic_attack.run_async.assert_not_called()
 
-        scenario_results = CentralMemory.get_memory_instance().get_scenario_results(
+        scenario_results = await CentralMemory.get_memory_instance().get_scenario_results_async(
             scenario_result_ids=[scenario._scenario_result_id]
         )
         assert scenario_results[0].scenario_run_state == ScenarioRunState.FAILED
@@ -374,7 +374,7 @@ class TestScenarioPartialAttackCompletion:
                 ]
                 incomplete = [("obj4", Exception("Failed obj4")), ("obj5", Exception("Failed obj5"))]
 
-                save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
+                (await save_attack_results_to_memory_async(completed, atomic_attack=atomic_attack))
 
                 return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
             # Retry: complete remaining objectives
@@ -388,7 +388,7 @@ class TestScenarioPartialAttackCompletion:
                 for i in [4, 5]
             ]
 
-            save_attack_results_to_memory(completed, atomic_attack=atomic_attack)
+            (await save_attack_results_to_memory_async(completed, atomic_attack=atomic_attack))
 
             return AttackExecutorResult(completed_results=completed, incomplete_objectives=[])
 
@@ -464,7 +464,7 @@ class TestScenarioPartialAttackCompletion:
 
         async def run_completed_attack(*args, **kwargs):
             worker_tasks.append(asyncio.current_task())
-            save_attack_results_to_memory([completed_result], atomic_attack=completed_attack)
+            await save_attack_results_to_memory_async([completed_result], atomic_attack=completed_attack)
             persisted_objectives.append(completed_result.objective)
             completed_persisted.set()
             try:
@@ -483,13 +483,13 @@ class TestScenarioPartialAttackCompletion:
                     in_flight_worker_exited.set()
 
             result = resumed_results["in_flight_attack"]
-            save_attack_results_to_memory([result], atomic_attack=in_flight_attack)
+            (await save_attack_results_to_memory_async([result], atomic_attack=in_flight_attack))
             persisted_objectives.append(result.objective)
             return AttackExecutorResult(completed_results=[result], incomplete_objectives=[])
 
         async def run_queued_attack(*args, **kwargs):
             result = resumed_results["queued_attack"]
-            save_attack_results_to_memory([result], atomic_attack=queued_attack)
+            (await save_attack_results_to_memory_async([result], atomic_attack=queued_attack))
             persisted_objectives.append(result.objective)
             return AttackExecutorResult(completed_results=[result], incomplete_objectives=[])
 
@@ -533,7 +533,7 @@ class TestScenarioPartialAttackCompletion:
                     task.cancel()
             await asyncio.gather(*worker_tasks, return_exceptions=True)
 
-        [cancelled_result] = CentralMemory.get_memory_instance().get_scenario_results(
+        [cancelled_result] = await CentralMemory.get_memory_instance().get_scenario_results_async(
             scenario_result_ids=[scenario._scenario_result_id]
         )
         assert cancelled_result.scenario_run_state == ScenarioRunState.CANCELLED
@@ -660,7 +660,9 @@ class TestScenarioPartialAttackCompletion:
                 assert sends["slow"].cancelling() == 1
                 assert not cleanup_finished.is_set()
                 assert not parent.done()
-                [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+                [stored] = await scenario._memory.get_scenario_results_async(
+                    scenario_result_ids=[scenario._scenario_result_id]
+                )
                 assert stored.scenario_run_state is ScenarioRunState.IN_PROGRESS
 
                 if cancel_again:
@@ -678,7 +680,9 @@ class TestScenarioPartialAttackCompletion:
                 assert set(sends) == {"slow", "fast"}
                 assert all(task.done() for task in sends.values())
                 assert not scenario._active_atomic_groups
-                [stored] = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])
+                [stored] = await scenario._memory.get_scenario_results_async(
+                    scenario_result_ids=[scenario._scenario_result_id]
+                )
                 assert stored.scenario_run_state is ScenarioRunState.CANCELLED
                 assert stored.number_tries == 1
             finally:
@@ -708,7 +712,7 @@ class TestScenarioPartialAttackCompletion:
             ),
             patch.object(
                 scenario._memory,
-                "update_scenario_run_state",
+                "update_scenario_run_state_async",
                 side_effect=RuntimeError("database unavailable"),
             ),
         ):
@@ -742,7 +746,7 @@ class TestScenarioPartialAttackCompletion:
                     ]
                     incomplete = [("a2_obj2", Exception("Failed a2_obj2")), ("a2_obj3", Exception("Failed a2_obj3"))]
 
-                    save_attack_results_to_memory(completed, atomic_attack=this_attack)
+                    (await save_attack_results_to_memory_async(completed, atomic_attack=this_attack))
 
                     return AttackExecutorResult(completed_results=completed, incomplete_objectives=incomplete)
                 # All other attempts succeed fully
@@ -756,7 +760,7 @@ class TestScenarioPartialAttackCompletion:
                     for obj in this_attack.objectives
                 ]
 
-                save_attack_results_to_memory(completed, atomic_attack=this_attack)
+                (await save_attack_results_to_memory_async(completed, atomic_attack=this_attack))
 
                 return AttackExecutorResult(completed_results=completed, incomplete_objectives=[])
 
@@ -819,14 +823,14 @@ class TestScenarioPartialAttackCompletion:
                 all_started.set()
             await all_started.wait()
 
-        def save_result(*, objective: str, attack: MagicMock) -> AttackResult:
+        async def save_result_async(*, objective: str, attack: MagicMock) -> AttackResult:
             result = AttackResult(
                 conversation_id=f"conv-{objective}",
                 objective=objective,
                 outcome=AttackOutcome.SUCCESS,
                 executed_turns=1,
             )
-            save_attack_results_to_memory([result], atomic_attack=attack)
+            (await save_attack_results_to_memory_async([result], atomic_attack=attack))
             return result
 
         async def run_attack_a_async(*args, **kwargs) -> AttackExecutorResult[AttackResult]:
@@ -834,13 +838,13 @@ class TestScenarioPartialAttackCompletion:
             objective_batches["attack-a"].append(objectives)
             if len(objective_batches["attack-a"]) == 1:
                 await wait_until_all_started_async(attack_name="attack-a")
-                completed = save_result(objective="a-complete", attack=attack_a)
+                completed = await save_result_async(objective="a-complete", attack=attack_a)
                 attack_a_finished.set()
                 return AttackExecutorResult(
                     completed_results=[completed],
                     incomplete_objectives=[("a-retry", RuntimeError("attack-a interrupted"))],
                 )
-            completed = save_result(objective="a-retry", attack=attack_a)
+            completed = await save_result_async(objective="a-retry", attack=attack_a)
             return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[])
 
         async def run_attack_b_async(*args, **kwargs) -> AttackExecutorResult[AttackResult]:
@@ -849,13 +853,13 @@ class TestScenarioPartialAttackCompletion:
             if len(objective_batches["attack-b"]) == 1:
                 await wait_until_all_started_async(attack_name="attack-b")
                 await attack_a_finished.wait()
-                completed = save_result(objective="b-complete", attack=attack_b)
+                completed = await save_result_async(objective="b-complete", attack=attack_b)
                 attack_b_finished.set()
                 return AttackExecutorResult(
                     completed_results=[completed],
                     incomplete_objectives=[("b-retry", TimeoutError("attack-b timed out"))],
                 )
-            completed = save_result(objective="b-retry", attack=attack_b)
+            completed = await save_result_async(objective="b-retry", attack=attack_b)
             return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[])
 
         async def run_attack_c_async(*args, **kwargs) -> AttackExecutorResult[AttackResult]:
@@ -863,7 +867,7 @@ class TestScenarioPartialAttackCompletion:
             objective_batches["attack-c"].append(objectives)
             await wait_until_all_started_async(attack_name="attack-c")
             await attack_b_finished.wait()
-            completed = save_result(objective="c-complete", attack=attack_c)
+            completed = await save_result_async(objective="c-complete", attack=attack_c)
             return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[])
 
         attack_a.run_async = AsyncMock(side_effect=run_attack_a_async)
@@ -886,8 +890,8 @@ class TestScenarioPartialAttackCompletion:
 
         with patch.object(
             scenario._memory,
-            "update_scenario_run_state",
-            wraps=scenario._memory.update_scenario_run_state,
+            "update_scenario_run_state_async",
+            wraps=scenario._memory.update_scenario_run_state_async,
         ) as update_state:
             with pytest.raises(ExceptionGroup) as exc_info:
                 await asyncio.wait_for(scenario.run_async(), timeout=10)
@@ -902,7 +906,9 @@ class TestScenarioPartialAttackCompletion:
             assert isinstance(partial_failures["attack-a"].incomplete_objectives[0][1], RuntimeError)
             assert isinstance(partial_failures["attack-b"].incomplete_objectives[0][1], TimeoutError)
 
-            failed_result = scenario._memory.get_scenario_results(scenario_result_ids=[scenario._scenario_result_id])[0]
+            failed_result = (
+                await scenario._memory.get_scenario_results_async(scenario_result_ids=[scenario._scenario_result_id])
+            )[0]
             assert failed_result.scenario_run_state == ScenarioRunState.FAILED
             assert failed_result.number_tries == 1
 
