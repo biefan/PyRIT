@@ -27,7 +27,8 @@ async def gather_with_cleanup_async(tasks: Iterable[Awaitable[TaskResultT]]) -> 
         for task in scheduled_tasks:
             if not task.done() and (not isinstance(task, asyncio.Task) or not task.cancelling()):
                 task.cancel()
-        drain = asyncio.gather(*scheduled_tasks, return_exceptions=True)
+        # Finished children may still have the original gather's callbacks queued.
+        drain = asyncio.gather(group, *scheduled_tasks, return_exceptions=True)
         outer_cancellation: asyncio.CancelledError | None = None
         while not drain.done():
             try:
@@ -35,8 +36,6 @@ async def gather_with_cleanup_async(tasks: Iterable[Awaitable[TaskResultT]]) -> 
             except asyncio.CancelledError as cancellation:
                 outer_cancellation = cancellation
         drain.result()
-        # Its shield may have been cancelled before the original gather observed a child error.
-        group.exception()
         if outer_cancellation:
             raise outer_cancellation from None
         raise
