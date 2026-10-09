@@ -951,6 +951,10 @@ class AttackService:
         if not target_obj:
             raise ValueError(f"Target object for '{target_registry_name}' not found")
 
+        # Inspect client-provided conversion state before media persistence fills
+        # converted_value with a storage path for otherwise unconverted pieces.
+        converter_configs = self._get_converter_configs(request)
+
         await self._persist_base64_pieces_async(request)
 
         self._resolve_video_remix_metadata(request)
@@ -961,8 +965,6 @@ class AttackService:
             sequence=sequence,
             labels=labels,
         )
-
-        converter_configs = self._get_converter_configs(request)
 
         normalizer = PromptNormalizer()
         await normalizer.send_prompt_async(

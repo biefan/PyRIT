@@ -1423,6 +1423,45 @@ class TestPersistBase64Pieces:
     """Tests for _persist_base64_pieces_async helper."""
 
     @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "media_value", ["aW1hZ2VkYXRh", "https://example.com/image.png", "/api/media?path=/saved/image.png"]
+    )
+    async def test_media_persistence_preserves_selected_converters(self, attack_service, media_value) -> None:
+        """Media persistence must not mark an unconverted request as preconverted."""
+        request = AddMessageRequest(
+            pieces=[
+                MessagePieceRequest(original_value="Hello"),
+                MessagePieceRequest(data_type="image_path", original_value=media_value, mime_type="image/png"),
+            ],
+            send=True,
+            target_conversation_id="test-id",
+            converter_ids=["conv-1"],
+            target_registry_name="test-target",
+        )
+        converter = MagicMock()
+        serializer = MagicMock(value="/saved/image.png")
+        serializer.save_b64_image = AsyncMock()
+        with (
+            patch("pyrit.backend.services.attack_service.get_target_service") as target_service,
+            patch("pyrit.backend.services.attack_service.get_converter_service") as converter_service,
+            patch("pyrit.backend.services.attack_service.data_serializer_factory", return_value=serializer),
+            patch("pyrit.backend.services.attack_service.PromptNormalizer") as normalizer_class,
+        ):
+            target_service.return_value.get_target_object.return_value = MagicMock()
+            converter_service.return_value.get_converter_objects_for_ids.return_value = [converter]
+            normalizer = normalizer_class.return_value
+            normalizer.send_prompt_async = AsyncMock()
+            await attack_service._send_and_store_message_async(
+                conversation_id="test-id", target_registry_name="test-target", request=request, sequence=0
+            )
+
+        call = normalizer.send_prompt_async.call_args.kwargs
+        configs = call["request_converter_configurations"]
+        assert len(configs) == 1
+        assert configs[0].converters == [converter]
+        assert call["message"].message_pieces[1].converted_value == request.pieces[1].original_value
+
+    @pytest.mark.asyncio
     async def test_text_pieces_are_unchanged(self, attack_service) -> None:
         """Text pieces should not be modified."""
         request = AddMessageRequest(
