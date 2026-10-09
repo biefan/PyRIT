@@ -15,11 +15,12 @@ have a common interface for scenarios.
 
 import logging
 import warnings
+from collections import Counter
 from typing import TYPE_CHECKING, Any, Optional
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core.attack_executor import AttackExecutorResult
-from pyrit.identifiers import build_atomic_attack_identifier
+from pyrit.identifiers import build_atomic_attack_identifier, build_seed_identifier
 from pyrit.identifiers.evaluation_identifier import AtomicAttackEvaluationIdentifier
 from pyrit.memory import CentralMemory
 from pyrit.memory.memory_models import MAX_IDENTIFIER_VALUE_LENGTH
@@ -111,6 +112,7 @@ class AtomicAttack:
             sg.validate()
 
         self._seed_groups = seed_groups
+        self._original_seed_groups = tuple(seed_groups)
         self._adversarial_chat = adversarial_chat
         self._objective_scorer = objective_scorer
         self._memory_labels = memory_labels or {}
@@ -159,6 +161,44 @@ class AtomicAttack:
         self._seed_groups = [
             sg for sg in self._seed_groups if sg.objective is not None and sg.objective.value in remaining_set
         ]
+
+    def filter_completed_seed_groups(self, *, completed_results: list[AttackResult]) -> None:
+        """
+        Restore original seed groups and remove only their completed occurrences.
+
+        Match persisted seed identifiers so different prompts sharing an objective
+        remain independent. Legacy results without seed identifiers can only safely
+        match an objective that occurs once in the original input.
+
+        Args:
+            completed_results: All completed results stored for this atomic attack.
+        """
+        completed_seeds: Counter[tuple[str, ...]] = Counter()
+        legacy_objectives: Counter[str] = Counter()
+        for result in completed_results:
+            identifier = result.atomic_attack_identifier
+            seeds = identifier.get_child_list("seed_identifiers") if identifier else []
+            if seeds:
+                completed_seeds[tuple(seed.hash for seed in seeds)] += 1
+            else:
+                legacy_objectives[result.objective] += 1
+
+        objective_counts = Counter(
+            group.objective.value for group in self._original_seed_groups if group.objective is not None
+        )
+        remaining = []
+        for group in self._original_seed_groups:
+            seed_key = tuple(build_seed_identifier(seed).hash for seed in group.seeds)
+            if completed_seeds[seed_key]:
+                completed_seeds[seed_key] -= 1
+                continue
+            assert group.objective is not None
+            objective = group.objective.value
+            if objective_counts[objective] == 1 and legacy_objectives[objective]:
+                legacy_objectives[objective] -= 1
+                continue
+            remaining.append(group)
+        self._seed_groups = remaining
 
     async def run_async(
         self,

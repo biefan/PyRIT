@@ -10,7 +10,7 @@ import pytest
 
 from pyrit.executor.attack import AttackExecutor, AttackStrategy
 from pyrit.executor.attack.core import AttackExecutorResult
-from pyrit.identifiers import ComponentIdentifier
+from pyrit.identifiers import ComponentIdentifier, build_atomic_attack_identifier
 from pyrit.identifiers.atomic_attack_identifier import build_atomic_attack_identifier
 from pyrit.models import (
     AttackOutcome,
@@ -1002,3 +1002,71 @@ class TestEnrichAtomicAttackIdentifiers:
                 await atomic.run_async()
 
         mock_memory.update_attack_result_by_id.assert_not_called()
+
+
+class TestCompletedSeedFiltering:
+    """Verify resume matching preserves distinct seed variants and occurrences."""
+
+    @pytest.mark.parametrize("truncate", [False, True])
+    def test_matches_seed_identity_after_repeated_filtering(self, mock_attack, truncate):
+        groups = [
+            SeedAttackGroup(seeds=[SeedObjective(value="shared objective"), SeedPrompt(value=f"prompt-{i}" * 100)])
+            for i in range(3)
+        ]
+        attack_id = ComponentIdentifier(class_name="TestAttack", class_module="test")
+        atomic = AtomicAttack(
+            atomic_attack_name="variants", attack_technique=AttackTechnique(attack=mock_attack), seed_groups=groups
+        )
+
+        def completed(group):
+            identifier = build_atomic_attack_identifier(attack_identifier=attack_id, seed_group=group)
+            if truncate:
+                identifier = ComponentIdentifier.from_dict(identifier.to_dict(max_value_length=10))
+            return AttackResult(
+                conversation_id="completed",
+                objective="shared objective",
+                atomic_attack_identifier=identifier,
+            )
+
+        # Complete a later input first, then another input on the next retry.
+        results = [completed(groups[2])]
+        atomic.filter_completed_seed_groups(completed_results=results)
+        assert atomic.seed_groups == groups[:2]
+        results.append(completed(groups[0]))
+        atomic.filter_completed_seed_groups(completed_results=results)
+        assert atomic.seed_groups == [groups[1]]
+        # Re-reading persisted results must not consume additional occurrences.
+        atomic.filter_completed_seed_groups(completed_results=results)
+        assert atomic.seed_groups == [groups[1]]
+
+    def test_identical_inputs_consume_one_completed_occurrence(self, mock_attack):
+        group = SeedAttackGroup(seeds=[SeedObjective(value="objective"), SeedPrompt(value="prompt")])
+        atomic = AtomicAttack(
+            atomic_attack_name="duplicates",
+            attack_technique=AttackTechnique(attack=mock_attack),
+            seed_groups=[group, group],
+        )
+        result = AttackResult(
+            conversation_id="completed",
+            objective="objective",
+            atomic_attack_identifier=build_atomic_attack_identifier(
+                attack_identifier=ComponentIdentifier(class_name="TestAttack", class_module="test"), seed_group=group
+            ),
+        )
+        atomic.filter_completed_seed_groups(completed_results=[result])
+        assert atomic.seed_groups == [group]
+
+    def test_legacy_results_only_skip_unambiguous_objectives(self, mock_attack):
+        groups = [
+            SeedAttackGroup(seeds=[SeedObjective(value=objective), SeedPrompt(value=f"prompt-{i}")])
+            for i, objective in enumerate(["shared", "shared", "unique"])
+        ]
+        atomic = AtomicAttack(
+            atomic_attack_name="legacy", attack_technique=AttackTechnique(attack=mock_attack), seed_groups=groups
+        )
+        atomic.filter_completed_seed_groups(
+            completed_results=[
+                AttackResult(conversation_id=objective, objective=objective) for objective in ["shared", "unique"]
+            ]
+        )
+        assert atomic.seed_groups == groups[:2]
