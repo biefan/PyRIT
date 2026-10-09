@@ -122,10 +122,14 @@ def create_mock_atomic_attack(name: str, objectives: list[str], run_async_mock: 
     attack = MagicMock(spec=AtomicAttack)
     attack.atomic_attack_name = name
     attack._attack = mock_attack_strategy
-    type(attack).objectives = PropertyMock(return_value=objectives)
+    current_objectives = {"value": list(objectives)}
+    type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
 
-    # Configure filter_seed_groups_by_objectives - needed for scenario retry filtering
-    attack.filter_seed_groups_by_objectives = MagicMock()
+    def filter_completed(*, completed_results):
+        completed = {result.objective for result in completed_results}
+        current_objectives["value"] = [obj for obj in objectives if obj not in completed]
+
+    attack.filter_completed_seed_groups = MagicMock(side_effect=filter_completed)
 
     if run_async_mock:
         attack.run_async = run_async_mock

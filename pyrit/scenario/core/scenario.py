@@ -411,20 +411,20 @@ class Scenario(ABC):
         )
         return True
 
-    def _get_completed_objectives_for_attack(self, *, atomic_attack_name: str) -> set[str]:
+    def _get_completed_results_for_attack(self, *, atomic_attack_name: str) -> list[AttackResult]:
         """
-        Get the set of objectives that have already been completed for a specific atomic attack.
+        Get completed results, including seed identities, for a specific atomic attack.
 
         Args:
             atomic_attack_name (str): The name of the atomic attack to check.
 
         Returns:
-            Set[str]: Set of objective strings that have been completed.
+            Completed results stored for the atomic attack.
         """
         if not self._scenario_result_id:
-            return set()
+            return []
 
-        completed_objectives: set[str] = set()
+        completed_results: list[AttackResult] = []
 
         try:
             # Retrieve the scenario result from memory
@@ -432,17 +432,13 @@ class Scenario(ABC):
 
             if scenario_results:
                 scenario_result = scenario_results[0]
-                # Get completed objectives for this atomic attack name
+                # Keep seed identities to distinguish variants of the same objective.
                 if atomic_attack_name in scenario_result.attack_results:
-                    completed_objectives = {
-                        result.objective for result in scenario_result.attack_results[atomic_attack_name]
-                    }
+                    completed_results = list(scenario_result.attack_results[atomic_attack_name])
         except Exception as e:
-            logger.warning(
-                f"Failed to retrieve completed objectives for atomic attack '{atomic_attack_name}': {str(e)}"
-            )
+            logger.warning(f"Failed to retrieve completed results for atomic attack '{atomic_attack_name}': {str(e)}")
 
-        return completed_objectives
+        return completed_results
 
     async def _get_remaining_atomic_attacks_async(self) -> list[AtomicAttack]:
         """
@@ -461,16 +457,15 @@ class Scenario(ABC):
         remaining_attacks: list[AtomicAttack] = []
 
         for atomic_attack in self._atomic_attacks:
-            # Get completed objectives for this atomic attack name
-            completed_objectives = self._get_completed_objectives_for_attack(
+            completed_results = self._get_completed_results_for_attack(
                 atomic_attack_name=atomic_attack.atomic_attack_name
             )
 
             # Get ORIGINAL objectives (before any mutations) from stored map
             original_objectives = self._original_objectives_map.get(atomic_attack.atomic_attack_name, ())
 
-            # Calculate remaining objectives
-            remaining_objectives = [obj for obj in original_objectives if obj not in completed_objectives]
+            atomic_attack.filter_completed_seed_groups(completed_results=completed_results)
+            remaining_objectives = atomic_attack.objectives
 
             if remaining_objectives:
                 # If there are remaining objectives, update the atomic attack
@@ -479,9 +474,6 @@ class Scenario(ABC):
                         f"Atomic attack '{atomic_attack.atomic_attack_name}' has "
                         f"{len(remaining_objectives)}/{len(original_objectives)} objectives remaining"
                     )
-                # Update the objectives for this atomic attack to only include remaining ones
-                atomic_attack.filter_seed_groups_by_objectives(remaining_objectives=remaining_objectives)
-
                 remaining_attacks.append(atomic_attack)
             else:
                 logger.info(

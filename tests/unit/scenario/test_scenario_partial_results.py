@@ -3,16 +3,16 @@
 
 """Additional tests for Scenario retry with AttackExecutorResult functionality."""
 
-from unittest.mock import MagicMock, PropertyMock
+from unittest.mock import AsyncMock, MagicMock, PropertyMock, patch
 
 import pytest
 
 from pyrit.executor.attack.core import AttackExecutorResult
 from pyrit.identifiers import ComponentIdentifier
 from pyrit.memory import CentralMemory
-from pyrit.models import AttackOutcome, AttackResult
+from pyrit.models import AttackOutcome, AttackResult, SeedAttackGroup, SeedObjective, SeedPrompt
 from pyrit.scenario import DatasetConfiguration, ScenarioResult
-from pyrit.scenario.core import AtomicAttack, Scenario, ScenarioStrategy
+from pyrit.scenario.core import AtomicAttack, AttackTechnique, Scenario, ScenarioStrategy
 
 
 def _mock_scorer_id(name: str = "MockScorer") -> ComponentIdentifier:
@@ -43,7 +43,7 @@ def save_attack_results_to_memory(attack_results):
 def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     """Create a mock AtomicAttack with required attributes for baseline creation.
 
-    The mock tracks its objectives and properly updates when filter_seed_groups_by_objectives is called.
+    The mock tracks its objectives and updates when completed results are filtered.
     """
     mock_attack_strategy = MagicMock()
     mock_attack_strategy.get_objective_target.return_value = MagicMock()
@@ -59,12 +59,11 @@ def create_mock_atomic_attack(name: str, objectives: list[str]) -> MagicMock:
     # Configure objectives property to return current objectives
     type(attack).objectives = PropertyMock(side_effect=lambda: current_objectives["value"])
 
-    # Configure filter_seed_groups_by_objectives to update the tracked objectives
-    def filter_objectives(*, remaining_objectives):
-        remaining_set = set(remaining_objectives)
-        current_objectives["value"] = [obj for obj in current_objectives["value"] if obj in remaining_set]
+    def filter_completed(*, completed_results):
+        completed = {result.objective for result in completed_results}
+        current_objectives["value"] = [obj for obj in objectives if obj not in completed]
 
-    attack.filter_seed_groups_by_objectives = MagicMock(side_effect=filter_objectives)
+    attack.filter_completed_seed_groups = MagicMock(side_effect=filter_completed)
 
     return attack
 
@@ -115,6 +114,50 @@ class ConcreteScenario(Scenario):
 @pytest.mark.usefixtures("patch_central_database")
 @pytest.mark.asyncio
 class TestScenarioPartialAttackCompletion:
+    async def test_retry_does_not_skip_unfinished_prompt_variant(self, mock_objective_target):
+        """Retry the failed seed even when another seed has the same objective."""
+        groups = [
+            SeedAttackGroup(seeds=[SeedObjective(value="same objective"), SeedPrompt(value=f"variant-{i}")])
+            for i in range(2)
+        ]
+        strategy = MagicMock()
+        strategy.get_identifier.return_value = ComponentIdentifier(class_name="TestAttack", class_module="test")
+        atomic_attack = AtomicAttack(
+            atomic_attack_name="variants",
+            attack_technique=AttackTechnique(attack=strategy),
+            seed_groups=groups,
+        )
+        attempted_variants = []
+
+        async def execute(**kwargs):
+            current_groups = kwargs["seed_groups"]
+            attempted_variants.append([group.prompts[0].value for group in current_groups])
+            completed = AttackResult(
+                conversation_id=f"variant-run-{len(attempted_variants)}",
+                objective="same objective",
+                outcome=AttackOutcome.SUCCESS,
+                executed_turns=1,
+            )
+            save_attack_results_to_memory([completed])
+            if len(attempted_variants) == 1:
+                # The second variant completes; the first still needs execution.
+                return AttackExecutorResult(
+                    completed_results=[completed],
+                    incomplete_objectives=[("same objective", RuntimeError("Target unavailable"))],
+                    input_indices=[1],
+                )
+            return AttackExecutorResult(completed_results=[completed], incomplete_objectives=[], input_indices=[0])
+
+        scenario = ConcreteScenario(name="Variants", version=1, atomic_attacks_to_return=[atomic_attack])
+        await scenario.initialize_async(objective_target=mock_objective_target, max_retries=1)
+        with patch("pyrit.scenario.core.atomic_attack.AttackExecutor") as executor_class:
+            executor_class.return_value.execute_attack_from_seed_groups_async = AsyncMock(side_effect=execute)
+            result = await scenario.run_async()
+
+        assert attempted_variants == [["variant-0", "variant-1"], ["variant-0"]]
+        assert result.scenario_run_state == "COMPLETED"
+        assert len(result.attack_results["variants"]) == 2
+
     """Tests for Scenario handling AttackExecutorResult from atomic attacks."""
 
     async def test_atomic_attack_returns_partial_result_with_incomplete_objectives(self, mock_objective_target):
