@@ -169,7 +169,9 @@ class AttackExecutor:
                 must match the length of seed_groups. Each dict is passed to
                 from_seed_group() as overrides.
             return_partial_on_failure: If True, returns partial results when some
-                objectives fail. If False (default), raises the first exception.
+                objectives fail during preparation or execution. Preparation
+                failures are reported using the seed group's original objective.
+                If False (default), raises the first exception.
             **broadcast_fields: Fields applied to all seed groups (e.g., memory_labels).
                 Per-seed-group field_overrides take precedence.
 
@@ -206,11 +208,35 @@ class AttackExecutor:
                     **combined_overrides,
                 )
 
-        params_list = list(await asyncio.gather(*[build_params(i, sg) for i, sg in enumerate(seed_groups)]))
+        prepared = await asyncio.gather(
+            *[build_params(i, sg) for i, sg in enumerate(seed_groups)],
+            return_exceptions=return_partial_on_failure,
+        )
 
-        return await self._execute_with_params_list_async(
-            attack=attack,
-            params_list=params_list,
+        # Preparation can fail before an attack starts (for example, while
+        # generating simulated conversations). Keep those failures in the same
+        # input positions as execution failures so partial batches remain usable.
+        async def run_prepared(params: AttackParameters | BaseException) -> AttackStrategyResultT:
+            if isinstance(params, BaseException):
+                raise params
+            async with semaphore:
+                context = attack._context_type(params=params)
+                return await attack.execute_with_context_async(context=context)
+
+        results_or_exceptions = await asyncio.gather(
+            *[run_prepared(params) for params in prepared], return_exceptions=True
+        )
+        objectives = []
+        for seed_group, params in zip(seed_groups, prepared, strict=True):
+            if isinstance(params, BaseException):
+                assert seed_group.objective is not None
+                objectives.append(seed_group.objective.value)
+            else:
+                objectives.append(params.objective)
+
+        return self._process_execution_results(
+            objectives=objectives,
+            results_or_exceptions=list(results_or_exceptions),
             return_partial_on_failure=return_partial_on_failure,
         )
 

@@ -10,7 +10,7 @@ These tests verify the new API that uses AttackParameters and params_type.
 import asyncio
 import dataclasses
 import uuid
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -27,6 +27,7 @@ from pyrit.models import (
     SeedAttackGroup,
     SeedObjective,
     SeedPrompt,
+    SeedSimulatedConversation,
 )
 
 
@@ -230,6 +231,105 @@ class TestExecuteAttackAsync:
 @pytest.mark.usefixtures("patch_central_database")
 class TestExecuteAttackFromSeedGroupsAsync:
     """Tests for execute_attack_from_seed_groups_async method."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("failed_preparations", [[1], [0, 1, 2]])
+    async def test_partial_results_include_preparation_failures(self, failed_preparations):
+        """A bad seed override must not discard independently executable seeds."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+        executor = AttackExecutor(max_concurrency=2)
+        result = await executor.execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=[create_seed_group(f"objective-{i}") for i in range(3)],
+            field_overrides=[{"unknown_field": True} if i in failed_preparations else {} for i in range(3)],
+            return_partial_on_failure=True,
+        )
+
+        successful_indices = [i for i in range(3) if i not in failed_preparations]
+        assert result.input_indices == successful_indices
+        assert [r.objective for r in result.completed_results] == [f"objective-{i}" for i in successful_indices]
+        assert [objective for objective, _ in result.incomplete_objectives] == [
+            f"objective-{i}" for i in failed_preparations
+        ]
+        assert all(isinstance(error, ValueError) for _, error in result.incomplete_objectives)
+        assert attack.execute_with_context_async.await_count == len(successful_indices)
+
+    @pytest.mark.asyncio
+    async def test_mixed_preparation_and_execution_failures_preserve_input_order(self):
+        """Report failures from both stages without losing result-to-input mappings."""
+        attack = create_mock_attack()
+        execution_error = RuntimeError("Target unavailable")
+
+        async def execute(*, context):
+            if context.params.objective == "objective-0":
+                raise execution_error
+            await asyncio.sleep(0)
+            return create_attack_result(context.params.objective)
+
+        attack.execute_with_context_async.side_effect = execute
+        result = await AttackExecutor(max_concurrency=2).execute_attack_from_seed_groups_async(
+            attack=attack,
+            seed_groups=[create_seed_group(f"objective-{i}") for i in range(4)],
+            field_overrides=[{}, {"unknown_field": True}, {"objective": "overridden-objective"}, {}],
+            return_partial_on_failure=True,
+        )
+
+        assert result.input_indices == [2, 3]
+        assert [r.objective for r in result] == ["overridden-objective", "objective-3"]
+        assert [objective for objective, _ in result.incomplete_objectives] == ["objective-0", "objective-1"]
+        assert result.exceptions[0] is execution_error
+        assert isinstance(result.exceptions[1], ValueError)
+
+    @pytest.mark.asyncio
+    async def test_preparation_failure_still_raises_by_default(self):
+        """Keep strict-mode preparation failures visible before attacks are sent."""
+        attack = create_mock_attack()
+        with pytest.raises(ValueError, match="unknown_field"):
+            await AttackExecutor().execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[create_seed_group("valid"), create_seed_group("invalid")],
+                field_overrides=[{}, {"unknown_field": True}],
+            )
+        attack.execute_with_context_async.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_simulated_conversation_failure_keeps_static_seed_results(self):
+        """An unavailable generation target must not abort unrelated static seeds."""
+        attack = create_mock_attack()
+        attack.execute_with_context_async.side_effect = lambda *, context: create_attack_result(
+            context.params.objective
+        )
+        simulated_group = SeedAttackGroup(
+            seeds=[
+                SeedObjective(value="simulated"),
+                SeedSimulatedConversation(
+                    num_turns=3,
+                    adversarial_chat_system_prompt_path="/path/to/adversarial.yaml",
+                    simulated_target_system_prompt_path="/path/to/target.yaml",
+                ),
+            ]
+        )
+        generation_error = RuntimeError("Generation target unavailable")
+        with patch(
+            "pyrit.executor.attack.multi_turn.simulated_conversation.generate_simulated_conversation_async",
+            new_callable=AsyncMock,
+            side_effect=generation_error,
+        ) as generate:
+            result = await AttackExecutor(max_concurrency=2).execute_attack_from_seed_groups_async(
+                attack=attack,
+                seed_groups=[simulated_group, create_seed_group("static")],
+                adversarial_chat=MagicMock(),
+                objective_scorer=MagicMock(),
+                return_partial_on_failure=True,
+            )
+
+        generate.assert_awaited_once()
+        assert result.input_indices == [1]
+        assert [r.objective for r in result] == ["static"]
+        assert result.incomplete_objectives == [("simulated", generation_error)]
 
     @pytest.mark.asyncio
     async def test_extracts_objectives_from_seed_groups(self):
